@@ -1,0 +1,13 @@
+{
+  "name": "@g2/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "migrate": "node migrate.mjs"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.0",
+    "postgres": "^3.4.0"
+  }
+}
