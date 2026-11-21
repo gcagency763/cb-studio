@@ -1,0 +1,9 @@
+#!/bin/bash
+# CB Studio MCP (stdio) — usado pelo Claude Desktop / Claude Code / Cowork.
+# Acha o node/pnpm mesmo quando o app é aberto pelo Finder (PATH mínimo).
+export PATH="/usr/local/bin:/opt/homebrew/bin:$HOME/.volta/bin:$HOME/.fnm/current/bin:$PATH"
+if [ -d "$HOME/.nvm/versions/node" ]; then
+  for d in "$HOME"/.nvm/versions/node/*/bin; do export PATH="$d:$PATH"; done
+fi
+cd "$(dirname "$0")/.." || exit 1
+exec npx --no-install tsx src/server.ts "$@"
