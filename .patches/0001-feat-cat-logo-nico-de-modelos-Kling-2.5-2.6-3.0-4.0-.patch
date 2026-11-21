@@ -1,0 +1,2620 @@
+From c52b8d5471c4fb0dd6d634961f9eeeac849564f9 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 17:37:52 -0300
+Subject: [PATCH] =?UTF-8?q?feat:=20cat=C3=A1logo=20=C3=BAnico=20de=20model?=
+ =?UTF-8?q?os=20(Kling=202.5/2.6/3.0/4.0,=20Seedance=202.x,=20GPT=20Image?=
+ =?UTF-8?q?=202.5/2.6,=20Nano=20Banana=202.1,=20Grok,=20upscale,=20avatar,?=
+ =?UTF-8?q?=20lipsync,=20ElevenLabs),=20p=C3=A1gina=20Gastos,=20Clone,=20d?=
+ =?UTF-8?q?icas=20do=20guia?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RuN42np61xqAB6grnhnWqy
+---
+ .env.example                                  |   4 +
+ ...s-cards-sem-sobreposi-o-guarda-de-mi.patch | 126 ++++++
+ apps/api/src/lib/db.ts                        |   6 +-
+ apps/api/src/lib/refs.ts                      |  18 +-
+ apps/api/src/lib/script.ts                    |   9 +-
+ apps/api/src/routes/generate.ts               |  76 +++-
+ apps/api/src/routes/stats.ts                  |  78 +++-
+ apps/api/src/worker.ts                        |   9 +-
+ apps/web/app/audio/page.tsx                   |  88 +++-
+ apps/web/app/clone/page.tsx                   | 147 +++++++
+ apps/web/app/globals.css                      |  22 +
+ apps/web/app/image/page.tsx                   |  63 ++-
+ apps/web/app/projects/[id]/page.tsx           |  82 ++--
+ apps/web/app/usage/page.tsx                   | 225 ++++++++++
+ apps/web/app/video/page.tsx                   |  87 ++--
+ apps/web/components/TopNav.tsx                |   5 +-
+ apps/web/lib/models.ts                        |  56 +++
+ packages/db/migrations/006_more_kinds.sql     |   3 +
+ packages/providers/src/byteplus/index.ts      |  27 +-
+ packages/providers/src/catalog.ts             | 391 ++++++++++++++++++
+ packages/providers/src/elevenlabs/index.ts    | 177 ++++++++
+ packages/providers/src/fal/index.ts           | 177 ++++++--
+ packages/providers/src/index.ts               |   4 +
+ packages/providers/src/seedaudio/index.ts     |  12 +-
+ packages/providers/src/types.ts               |  52 ++-
+ 25 files changed, 1776 insertions(+), 168 deletions(-)
+ create mode 100644 .patches/0001-render-layout-dos-cards-sem-sobreposi-o-guarda-de-mi.patch
+ create mode 100644 apps/web/app/clone/page.tsx
+ create mode 100644 apps/web/app/usage/page.tsx
+ create mode 100644 apps/web/lib/models.ts
+ create mode 100644 packages/db/migrations/006_more_kinds.sql
+ create mode 100644 packages/providers/src/catalog.ts
+ create mode 100644 packages/providers/src/elevenlabs/index.ts
+
+diff --git a/.env.example b/.env.example
+index 3ebb105..5cc4593 100644
+--- a/.env.example
++++ b/.env.example
+@@ -24,7 +24,11 @@ FAL_KEY=
+ GOOGLE_API_KEY=
+ 
+ # ElevenLabs (voz) — fase 3, opcional
++# ElevenLabs (narração v4, clonar voz, efeitos sonoros) — plano Starter US$ 5/mês libera clonagem
+ ELEVENLABS_API_KEY=
++ELEVENLABS_MODEL=eleven_v3
++# voz padrão (id de uma voz da sua biblioteca ElevenLabs); vazio = "George"
++ELEVENLABS_VOICE_ID=
+ 
+ # Infra local
+ DATABASE_URL=postgres://g2:g2@localhost:5433/g2studio
+diff --git a/.patches/0001-render-layout-dos-cards-sem-sobreposi-o-guarda-de-mi.patch b/.patches/0001-render-layout-dos-cards-sem-sobreposi-o-guarda-de-mi.patch
+new file mode 100644
+index 0000000..b3d7cbd
+--- /dev/null
++++ b/.patches/0001-render-layout-dos-cards-sem-sobreposi-o-guarda-de-mi.patch
+@@ -0,0 +1,126 @@
++From 1be8c1adf2c28690123a74d28750a047e02b9071 Mon Sep 17 00:00:00 2001
++From: Claude <noreply@anthropic.com>
++Date: Wed, 11 Nov 2026 16:09:26 -0300
++Subject: [PATCH] =?UTF-8?q?render:=20layout=20dos=20cards=20sem=20sobrepos?=
++ =?UTF-8?q?i=C3=A7=C3=A3o;=20guarda=20de=20minutos=20de=20voz=20(VOICE=5FF?=
++ =?UTF-8?q?REE=5FMINUTES)?=
++MIME-Version: 1.0
++Content-Type: text/plain; charset=UTF-8
++Content-Transfer-Encoding: 8bit
++
++Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
++Claude-Session: https://claude.ai/code/session_01RuN42np61xqAB6grnhnWqy
++---
++ .env.example                    |  2 ++
++ apps/api/src/lib/db.ts          |  8 ++++++++
++ apps/api/src/lib/env.ts         |  2 ++
++ apps/api/src/lib/render.ts      | 23 ++++++++++++++++++-----
++ apps/api/src/routes/generate.ts | 13 +++++++++++++
++ 5 files changed, 43 insertions(+), 5 deletions(-)
++
++diff --git a/.env.example b/.env.example
++index 00be9aa..3ebb105 100644
++--- a/.env.example
+++++ b/.env.example
++@@ -39,3 +39,5 @@ S3_PUBLIC_BASE_URL=
++ 
++ # Guarda de custo: a API recusa jobs acima disso (USD) sem flag allowPaid
++ MAX_JOB_COST_USD=0.50
+++# trava de narração: não gera voz além disso (Seed Speech dá 60 min grátis, depois US$ 0,15/min)
+++VOICE_FREE_MINUTES=55
++diff --git a/apps/api/src/lib/db.ts b/apps/api/src/lib/db.ts
++index fb766cf..2fc71e3 100644
++--- a/apps/api/src/lib/db.ts
+++++ b/apps/api/src/lib/db.ts
++@@ -226,3 +226,11 @@ export async function listAssets(kind?: string, limit = 200) {
++     ? sql<JobRow[]>`select * from jobs where status = 'succeeded' and output_url is not null and kind = ${kind} order by created_at desc limit ${limit}`
++     : sql<JobRow[]>`select * from jobs where status = 'succeeded' and output_url is not null order by created_at desc limit ${limit}`;
++ }
+++
+++/** minutos de áudio já gerados pelo Seed Speech (sucesso) — pra guarda da cota grátis */
+++export async function voiceMinutesUsed(): Promise<number> {
+++  const [row] = await sql<{ secs: string | null }[]>`
+++    select coalesce(sum((usage->>'seconds')::numeric), 0) as secs
+++    from jobs where kind = 'audio' and status = 'succeeded'`;
+++  return Number(row?.secs ?? 0) / 60;
+++}
++diff --git a/apps/api/src/lib/env.ts b/apps/api/src/lib/env.ts
++index b675dd0..cd5285d 100644
++--- a/apps/api/src/lib/env.ts
+++++ b/apps/api/src/lib/env.ts
++@@ -18,6 +18,8 @@ const schema = z.object({
++   DATABASE_URL: z.string().default("postgres://g2:g2@localhost:5433/g2studio"),
++   REDIS_URL: z.string().default("redis://localhost:6380"),
++   MAX_JOB_COST_USD: z.coerce.number().default(0.5),
+++  /** trava de minutos de narração (Seed Speech: 60 min grátis, depois US$ 0,15/min) */
+++  VOICE_FREE_MINUTES: z.coerce.number().default(55),
++   // pasta absoluta na raiz do monorepo — API e worker precisam ver o mesmo lugar
++   STORAGE_DIR: z.string().default(resolve(here, "../../../../storage")),
++   S3_ENDPOINT: z.string().optional(),
++diff --git a/apps/api/src/lib/render.ts b/apps/api/src/lib/render.ts
++index 133f9ca..3fe48af 100644
++--- a/apps/api/src/lib/render.ts
+++++ b/apps/api/src/lib/render.ts
++@@ -237,11 +237,24 @@ Style: Btn,${o.fontName},${btn},&H00141414,&H00FFFFFF,${gold},${gold},-1,0,0,0,1
++ `;
++   const lines: string[] = [];
++   const fade = "{\\fad(250,250)}";
++-  // título com leve "pop"
++-  const titleY = card.subtext || card.button ? Math.round(o.height * 0.44) : Math.round(o.height * 0.5);
++-  lines.push(`Dialogue: 0,${assTime(0)},${assTime(dur)},Title,,0,0,0,,${fade}{\\pos(${o.width / 2},${titleY})\\fscx96\\fscy96\\t(0,300,\\fscx100\\fscy100)}${escapeAss(wrap(card.text, 14))}`);
++-  if (card.subtext) lines.push(`Dialogue: 0,${assTime(0.15)},${assTime(dur)},Sub,,0,0,0,,${fade}{\\pos(${o.width / 2},${Math.round(o.height * 0.56)})}${escapeAss(wrap(card.subtext, 30))}`);
++-  if (card.button) lines.push(`Dialogue: 0,${assTime(0.3)},${assTime(dur)},Btn,,0,0,0,,${fade}{\\pos(${o.width / 2},${Math.round(o.height * 0.7)})}  ${escapeAss(card.button.toUpperCase())}  `);
+++  // layout vertical: mede os blocos (título pode ter 1–3 linhas) e empilha centrado,
+++  // pra título longo nunca invadir o subtítulo/botão
+++  const titleTxt = wrap(card.text, 14);
+++  const subTxt = card.subtext ? wrap(card.subtext, 30) : "";
+++  const titleH = titleTxt.split("\n").length * big * 1.15;
+++  const subH = subTxt ? subTxt.split("\n").length * sub * 1.3 : 0;
+++  const btnH = card.button ? btn * 1.9 : 0;
+++  const gap = Math.round(o.fontSize * 0.9);
+++  const totalH = titleH + (subH ? gap + subH : 0) + (btnH ? gap * 1.6 + btnH : 0);
+++  let y = o.height * 0.5 - totalH / 2;
+++  const titleY = Math.round(y + titleH / 2);
+++  y += titleH + gap;
+++  lines.push(`Dialogue: 0,${assTime(0)},${assTime(dur)},Title,,0,0,0,,${fade}{\\pos(${o.width / 2},${titleY})\\fscx96\\fscy96\\t(0,300,\\fscx100\\fscy100)}${escapeAss(titleTxt)}`);
+++  if (subTxt) {
+++    lines.push(`Dialogue: 0,${assTime(0.15)},${assTime(dur)},Sub,,0,0,0,,${fade}{\\pos(${o.width / 2},${Math.round(y + subH / 2)})}${escapeAss(subTxt)}`);
+++    y += subH;
+++  }
+++  if (card.button) lines.push(`Dialogue: 0,${assTime(0.3)},${assTime(dur)},Btn,,0,0,0,,${fade}{\\pos(${o.width / 2},${Math.round(y + gap * 1.6 + btnH / 2)})}  ${escapeAss(card.button.toUpperCase())}  `);
++   return assHeader(o, styles) + lines.join("\n") + "\n";
++ }
++ 
++diff --git a/apps/api/src/routes/generate.ts b/apps/api/src/routes/generate.ts
++index 647fef4..a0f7148 100644
++--- a/apps/api/src/routes/generate.ts
+++++ b/apps/api/src/routes/generate.ts
++@@ -1,5 +1,6 @@
++ import type { FastifyInstance } from "fastify";
++ import { z } from "zod";
+++import { voiceMinutesUsed } from "../lib/db.js";
++ import { providersFromEnv } from "@g2/providers";
++ import { createJob, getJob } from "../lib/db.js";
++ import { env } from "../lib/env.js";
++@@ -86,6 +87,18 @@ export async function generateRoutes(app: FastifyInstance) {
++     if (!p.supports(body.request.kind)) return reply.code(400).send({ error: `${p.name} não gera ${body.request.kind}` });
++ 
++     const cost = p.estimateCost(body.request);
+++    // ── GUARDA DE MINUTOS DE VOZ (Seed Speech cobra US$ 0,15/min depois da cota grátis) ──
+++    if (body.request.kind === "audio") {
+++      const used = await voiceMinutesUsed();
+++      const extra = Math.max(2, body.request.text.length / 15) / 60;
+++      if (used + extra > env.VOICE_FREE_MINUTES) {
+++        return reply.code(402).send({
+++          error: `limite de voz grátis: ${used.toFixed(1)} de ${env.VOICE_FREE_MINUTES} min usados — suba VOICE_FREE_MINUTES no .env pra liberar (cobra US$ 0,15/min)`,
+++          voiceMinutesUsed: used,
+++          voiceFreeMinutes: env.VOICE_FREE_MINUTES,
+++        });
+++      }
+++    }
++     // ── GUARDA DE CUSTO ──────────────────────────────────────────────
++     if (cost > env.MAX_JOB_COST_USD && !body.allowPaid) {
++       return reply.code(402).send({
++-- 
++2.43.0
++
+diff --git a/apps/api/src/lib/db.ts b/apps/api/src/lib/db.ts
+index 2fc71e3..1b8b80c 100644
+--- a/apps/api/src/lib/db.ts
++++ b/apps/api/src/lib/db.ts
+@@ -7,7 +7,7 @@ export type JobRow = {
+   id: string;
+   project_id: string | null;
+   scene_id: string | null;
+-  kind: "image" | "video" | "audio" | "render";
++  kind: "image" | "video" | "audio" | "avatar" | "upscale" | "lipsync" | "sfx" | "render";
+   provider: string;
+   provider_job_id: string | null;
+   status: "queued" | "running" | "succeeded" | "failed";
+@@ -222,8 +222,10 @@ export async function createUpload(u: Omit<UploadRow, "id" | "created_at">) {
+ 
+ /** Galeria: todos os jobs concluídos com arquivo, por tipo. */
+ export async function listAssets(kind?: string, limit = 200) {
++  // upscale aparece junto das imagens; avatar (clone) junto dos vídeos
++  const kinds = kind === "image" ? ["image", "upscale"] : kind === "video" ? ["video", "avatar", "lipsync"] : kind === "audio" ? ["audio", "sfx"] : kind ? [kind] : [];
+   return kind
+-    ? sql<JobRow[]>`select * from jobs where status = 'succeeded' and output_url is not null and kind = ${kind} order by created_at desc limit ${limit}`
++    ? sql<JobRow[]>`select * from jobs where status = 'succeeded' and output_url is not null and kind = any(${kinds}) order by created_at desc limit ${limit}`
+     : sql<JobRow[]>`select * from jobs where status = 'succeeded' and output_url is not null order by created_at desc limit ${limit}`;
+ }
+ 
+diff --git a/apps/api/src/lib/refs.ts b/apps/api/src/lib/refs.ts
+index 507d051..e469556 100644
+--- a/apps/api/src/lib/refs.ts
++++ b/apps/api/src/lib/refs.ts
+@@ -39,7 +39,23 @@ export async function resolveRequestRefs(req: GenerationRequest): Promise<Genera
+     return req;
+   }
+   if (req.kind === "video") {
+-    return { ...req, firstFrame: await resolveLocalRef(req.firstFrame), lastFrame: await resolveLocalRef(req.lastFrame) };
++    return {
++      ...req,
++      firstFrame: await resolveLocalRef(req.firstFrame),
++      lastFrame: await resolveLocalRef(req.lastFrame),
++      audioRef: await resolveLocalRef(req.audioRef),
++      referenceImages: req.referenceImages?.length ? await Promise.all(req.referenceImages.map((r) => resolveLocalRef(r) as Promise<string>)) : undefined,
++    };
++  }
++  if (req.kind === "lipsync") {
++    return { ...req, videoUrl: (await resolveLocalRef(req.videoUrl)) as string, audioUrl: (await resolveLocalRef(req.audioUrl)) as string };
++  }
++  if (req.kind === "sfx") return req;
++  if (req.kind === "avatar") {
++    return { ...req, imageUrl: (await resolveLocalRef(req.imageUrl)) as string, audioUrl: (await resolveLocalRef(req.audioUrl)) as string };
++  }
++  if (req.kind === "upscale") {
++    return { ...req, imageUrl: (await resolveLocalRef(req.imageUrl)) as string };
+   }
+   if (req.referenceImages?.length) {
+     return { ...req, referenceImages: await Promise.all(req.referenceImages.map((r) => resolveLocalRef(r) as Promise<string>)) };
+diff --git a/apps/api/src/lib/script.ts b/apps/api/src/lib/script.ts
+index e164612..981b2be 100644
+--- a/apps/api/src/lib/script.ts
++++ b/apps/api/src/lib/script.ts
+@@ -96,7 +96,14 @@ REGRAS DE SAÍDA — responda SOMENTE com JSON válido neste formato:
+ }
+ 
+ Público: ${req.audience ?? "brasileiros 25-45 anos que querem renda extra"}.
+-${n} cenas de vídeo + os cards (abertura, 0–2 no meio, final). Nada fora do JSON.`;
++${n} cenas de vídeo + os cards (abertura, 0–2 no meio, final). Nada fora do JSON.
++
++Regras de produção (aprendidas em dezenas de vídeos):
++- Narração: números por extenso ("vinte mil", nunca "20k"); frases curtas; nada de palavra em inglês no início da frase.
++- Nenhum plano parado: cada cena de vídeo tem UMA ação clara e dura 4–5 s; se a ação for longa, divida em duas cenas com ângulos diferentes.
++- Mão com objeto (pegar, abrir, guardar): descreva no image_prompt a mão de perfil e, no motion_prompt, o início e o fim do gesto.
++- Evite reflexos em vidro/espelho e multidões (a IA erra rostos).
++- Cada image_prompt repete o character_sheet inteiro.`;
+ }
+ 
+ export async function generateScript(req: ScriptRequest, cfg: { apiKey: string; baseUrl?: string; model?: string }): Promise<ScriptOutput & { usage?: unknown }> {
+diff --git a/apps/api/src/routes/generate.ts b/apps/api/src/routes/generate.ts
+index a0f7148..48334b8 100644
+--- a/apps/api/src/routes/generate.ts
++++ b/apps/api/src/routes/generate.ts
+@@ -1,7 +1,7 @@
+ import type { FastifyInstance } from "fastify";
+ import { z } from "zod";
+ import { voiceMinutesUsed } from "../lib/db.js";
+-import { providersFromEnv } from "@g2/providers";
++import { catalogWithAvailability, findModel, providersFromEnv } from "@g2/providers";
+ import { createJob, getJob } from "../lib/db.js";
+ import { env } from "../lib/env.js";
+ import { generationQueue } from "../lib/queue.js";
+@@ -28,6 +28,8 @@ const videoSchema = z.object({
+   resolution: z.enum(["480p", "720p", "1080p"]).optional(),
+   durationSec: z.number().int().min(2).max(30).optional(),
+   audio: z.boolean().optional(),
++  audioRef: z.string().min(1).optional(),
++  referenceImages: z.array(z.string().min(1)).max(30).optional(),
+   seed: z.number().int().optional(),
+ });
+ 
+@@ -43,6 +45,43 @@ const audioSchema = z.object({
+   language: z.string().optional(),
+ });
+ 
++const avatarSchema = z.object({
++  kind: z.literal("avatar"),
++  model: z.string().optional(),
++  imageUrl: z.string().min(1),
++  audioUrl: z.string().min(1),
++  prompt: z.string().max(500).optional(),
++  resolution: z.enum(["720p", "1080p"]).optional(),
++  audioSec: z.number().positive().optional(),
++});
++
++const upscaleSchema = z.object({
++  kind: z.literal("upscale"),
++  model: z.string().optional(),
++  imageUrl: z.string().min(1),
++  factor: z.number().min(1).max(4).optional(),
++  creativity: z.number().min(0).max(1).optional(),
++  resemblance: z.number().min(0).max(1).optional(),
++  prompt: z.string().max(500).optional(),
++  inputMp: z.number().positive().optional(),
++});
++
++const lipsyncSchema = z.object({
++  kind: z.literal("lipsync"),
++  model: z.string().optional(),
++  videoUrl: z.string().min(1),
++  audioUrl: z.string().min(1),
++  pro: z.boolean().optional(),
++  videoSec: z.number().positive().optional(),
++});
++
++const sfxSchema = z.object({
++  kind: z.literal("sfx"),
++  model: z.string().optional(),
++  prompt: z.string().min(2).max(400),
++  durationSec: z.number().min(0.5).max(22).optional(),
++});
++
+ const bodySchema = z.object({
+   /** vazio = escolhe pelo tipo (byteplus para imagem/vídeo, seedaudio para áudio) */
+   provider: z.string().optional(),
+@@ -50,22 +89,39 @@ const bodySchema = z.object({
+   sceneId: z.string().uuid().optional(),
+   /** precisa ser true para jobs acima de MAX_JOB_COST_USD */
+   allowPaid: z.boolean().default(false),
+-  request: z.discriminatedUnion("kind", [imageSchema, videoSchema, audioSchema]),
++  request: z.discriminatedUnion("kind", [imageSchema, videoSchema, audioSchema, avatarSchema, upscaleSchema, lipsyncSchema, sfxSchema]),
+ });
+ 
+-function pickProvider(name: string | undefined, kind: "image" | "video" | "audio") {
++type Kind = "image" | "video" | "audio" | "avatar" | "upscale" | "lipsync" | "sfx";
++/** 1) modelo do catálogo decide o provedor; 2) nome explícito; 3) padrão por tipo */
++function pickProvider(name: string | undefined, kind: Kind, model?: string) {
++  const m = findModel(model);
++  if (m) return providers[m.provider];
+   if (name) return providers[name];
+   if (kind === "audio") return providers.seedaudio;
++  if (kind === "sfx") return providers.elevenlabs;
++  if (kind === "avatar") return providers.fal ?? providers.byteplus;
++  if (kind === "upscale" || kind === "lipsync") return providers.fal;
+   return providers.byteplus;
+ }
++function hintFor(name: string | undefined, kind: Kind, model?: string) {
++  const m = findModel(model);
++  if (m?.gate === "fal" || (!m && (name === "fal" || kind === "avatar" || kind === "upscale"))) return PROVIDER_HINT.fal;
++  if (m?.gate === "reserve") return "Seedance 2.x exige fundo de reserva (US$ 30) na BytePlus → ARK_ALLOW_SEEDANCE_2=true";
++  if (m?.gate === "elevenlabs" || kind === "sfx") return PROVIDER_HINT.elevenlabs;
++  return PROVIDER_HINT[name ?? ""] ?? `provedor para ${kind} não configurado`;
++}
+ 
+ const PROVIDER_HINT: Record<string, string> = {
+-  fal: "Kling 4.0 precisa de FAL_KEY no .env (conta em fal.ai, paga por uso)",
++  fal: "esse modelo roda na fal.ai (Kling, Nano Banana, GPT Image, upscale, avatar) — precisa de FAL_KEY no .env (conta pré-paga, mínimo US$ 10)",
+   google: "Veo / Nano Banana precisam de GOOGLE_API_KEY (fase 2)",
+-  elevenlabs: "ElevenLabs precisa de ELEVENLABS_API_KEY (fase 3)",
++  elevenlabs: "ElevenLabs (narração v4, clonar voz, efeitos sonoros) precisa de ELEVENLABS_API_KEY no .env — plano Starter US$ 5/mês libera clonagem",
+ };
+ 
+ export async function generateRoutes(app: FastifyInstance) {
++  /** catálogo de modelos com disponibilidade (o que está travado e por quê) */
++  app.get("/models", async () => ({ models: catalogWithAvailability(process.env) }));
++
+   app.get("/providers", async () => ({
+     providers: Object.values(providers).map((p) => ({ name: p.name, image: p.supports("image"), video: p.supports("video"), audio: p.supports("audio") })),
+     seedance2: process.env.ARK_ALLOW_SEEDANCE_2 === "true",
+@@ -75,20 +131,20 @@ export async function generateRoutes(app: FastifyInstance) {
+   /** Só estima — não gasta nada. Usado pela UI antes de confirmar. */
+   app.post("/estimate", async (req, reply) => {
+     const body = bodySchema.parse(req.body);
+-    const p = pickProvider(body.provider, body.request.kind);
+-    if (!p) return reply.code(400).send({ error: PROVIDER_HINT[body.provider ?? ""] ?? `provedor para ${body.request.kind} não configurado` });
++    const p = pickProvider(body.provider, body.request.kind, (body.request as any).model);
++    if (!p) return reply.code(400).send({ error: hintFor(body.provider, body.request.kind, (body.request as any).model) });
+     return { estimatedCostUsd: p.estimateCost(body.request) };
+   });
+ 
+   app.post("/generate", async (req, reply) => {
+     const body = bodySchema.parse(req.body);
+-    const p = pickProvider(body.provider, body.request.kind);
+-    if (!p) return reply.code(400).send({ error: PROVIDER_HINT[body.provider ?? ""] ?? `provedor para ${body.request.kind} não configurado` });
++    const p = pickProvider(body.provider, body.request.kind, (body.request as any).model);
++    if (!p) return reply.code(400).send({ error: hintFor(body.provider, body.request.kind, (body.request as any).model) });
+     if (!p.supports(body.request.kind)) return reply.code(400).send({ error: `${p.name} não gera ${body.request.kind}` });
+ 
+     const cost = p.estimateCost(body.request);
+     // ── GUARDA DE MINUTOS DE VOZ (Seed Speech cobra US$ 0,15/min depois da cota grátis) ──
+-    if (body.request.kind === "audio") {
++    if (body.request.kind === "audio" && p.name === "seedaudio") {
+       const used = await voiceMinutesUsed();
+       const extra = Math.max(2, body.request.text.length / 15) / 60;
+       if (used + extra > env.VOICE_FREE_MINUTES) {
+diff --git a/apps/api/src/routes/stats.ts b/apps/api/src/routes/stats.ts
+index 6753bad..ff88104 100644
+--- a/apps/api/src/routes/stats.ts
++++ b/apps/api/src/routes/stats.ts
+@@ -1,5 +1,6 @@
+ import type { FastifyInstance } from "fastify";
+-import { sql } from "../lib/db.js";
++import { findModel } from "@g2/providers";
++import { sql, voiceMinutesUsed } from "../lib/db.js";
+ import { env } from "../lib/env.js";
+ 
+ /** Resumo de custo/uso para a sidebar. Valores nominais (cota grátis cobre em dev). */
+@@ -25,4 +26,79 @@ export async function statsRoutes(app: FastifyInstance) {
+       freeCreditsOnly: true,
+     };
+   });
++
++  /**
++   * Página "Gastos": custo por dia (30 d), por mês, por modelo/provedor, cotas grátis.
++   * estimated_cost_usd é o preço de tabela; "cobrado" = o que sai do cartão de fato
++   * (BytePlus em modo só-grátis e Seed Audio dentro dos 60 min contam como 0).
++   */
++  app.get("/usage", async () => {
++    const days = await sql<{ day: string; usd: string; jobs: number }[]>`
++      select to_char(date_trunc('day', created_at), 'YYYY-MM-DD') as day,
++             coalesce(sum(estimated_cost_usd), 0)::text as usd, count(*)::int as jobs
++      from jobs where status = 'succeeded' and created_at >= now() - interval '30 days'
++      group by 1 order by 1`;
++    const months = await sql<{ month: string; usd: string; jobs: number }[]>`
++      select to_char(date_trunc('month', created_at), 'YYYY-MM') as month,
++             coalesce(sum(estimated_cost_usd), 0)::text as usd, count(*)::int as jobs
++      from jobs where status = 'succeeded' group by 1 order by 1 desc limit 12`;
++    const byModel = await sql<{ provider: string; kind: string; model: string | null; jobs: number; usd: string; secs: string; month_usd: string; month_jobs: number }[]>`
++      select provider, kind, request->>'model' as model, count(*)::int as jobs,
++             coalesce(sum(estimated_cost_usd), 0)::text as usd,
++             coalesce(sum((usage->>'seconds')::numeric), 0)::text as secs,
++             coalesce(sum(estimated_cost_usd) filter (where created_at >= date_trunc('month', now())), 0)::text as month_usd,
++             count(*) filter (where created_at >= date_trunc('month', now()))::int as month_jobs
++      from jobs where status = 'succeeded' and kind <> 'render'
++      group by 1, 2, 3 order by usd desc`;
++    const recent = await sql<{ id: string; kind: string; provider: string; model: string | null; usd: string; created_at: Date; project_id: string | null }[]>`
++      select id, kind, provider, request->>'model' as model, estimated_cost_usd::text as usd, created_at, project_id
++      from jobs where status = 'succeeded' and kind <> 'render' order by created_at desc limit 40`;
++
++    // tokens de vídeo consumidos por modelo BytePlus (pra cota grátis de 2M por modelo)
++    const videoTokens = await sql<{ model: string; tokens: string }[]>`
++      select request->>'model' as model, coalesce(sum((usage->>'total_tokens')::numeric), 0)::text as tokens
++      from jobs where status = 'succeeded' and kind = 'video' and provider = 'byteplus' group by 1`;
++    const imagesByModel = await sql<{ model: string; n: number }[]>`
++      select coalesce(request->>'model', 'seedream-4-5-251128') as model, count(*)::int as n
++      from jobs where status = 'succeeded' and kind = 'image' and provider = 'byteplus' group by 1`;
++
++    const voiceMin = await voiceMinutesUsed();
++    const freeTokens = 2_000_000;
++    const quotas = [
++      ...videoTokens
++        .filter((v) => v.model)
++        .map((v) => ({ id: v.model, name: findModel(v.model)?.name ?? v.model, unit: "tokens", used: +v.tokens, free: freeTokens, pctUsed: Math.min(100, (+v.tokens / freeTokens) * 100) })),
++      ...imagesByModel.map((i) => ({ id: i.model, name: findModel(i.model)?.name ?? i.model, unit: "imagens", used: i.n, free: 200, pctUsed: Math.min(100, (i.n / 200) * 100) })),
++      { id: "seed-audio-1.0", name: "Seed Audio 1.0 (voz)", unit: "min", used: +voiceMin.toFixed(2), free: 60, pctUsed: Math.min(100, (voiceMin / 60) * 100), lockAt: env.VOICE_FREE_MINUTES },
++    ];
++
++    /** o que de fato sai do cartão: só provedores pagos (fal) e Seed Audio além do grátis */
++    const billed = byModel.reduce((acc, r) => acc + (r.provider === "fal" ? +r.usd : 0), 0) + Math.max(0, voiceMin - 60) * 0.15;
++    const billedMonth = byModel.reduce((acc, r) => acc + (r.provider === "fal" ? +r.month_usd : 0), 0);
++
++    return {
++      days: days.map((d) => ({ day: d.day, usd: +d.usd, jobs: d.jobs })),
++      months: months.map((m) => ({ month: m.month, usd: +m.usd, jobs: m.jobs })),
++      byModel: byModel.map((r) => ({
++        provider: r.provider,
++        kind: r.kind,
++        model: r.model,
++        name: findModel(r.model)?.name ?? r.model ?? `${r.provider} (${r.kind})`,
++        jobs: r.jobs,
++        usd: +r.usd,
++        seconds: +r.secs,
++        monthUsd: +r.month_usd,
++        monthJobs: r.month_jobs,
++        billed: r.provider === "fal",
++      })),
++      recent: recent.map((r) => ({ ...r, name: findModel(r.model)?.name ?? r.model ?? r.provider, usd: +r.usd })),
++      quotas,
++      billedUsd: +billed.toFixed(2),
++      billedMonthUsd: +billedMonth.toFixed(2),
++      nominalMonthUsd: +months.find((m) => m.month === new Date().toISOString().slice(0, 7))?.usd! || 0,
++      voiceFreeMinutes: env.VOICE_FREE_MINUTES,
++      maxJobCostUsd: env.MAX_JOB_COST_USD,
++      providers: { byteplus: !!process.env.ARK_API_KEY, seedaudio: !!(process.env.SEED_SPEECH_API_KEY || process.env.ARK_API_KEY), fal: !!process.env.FAL_KEY, seedance2: process.env.ARK_ALLOW_SEEDANCE_2 === "true" },
++    };
++  });
+ }
+diff --git a/apps/api/src/worker.ts b/apps/api/src/worker.ts
+index ad79350..735e15c 100644
+--- a/apps/api/src/worker.ts
++++ b/apps/api/src/worker.ts
+@@ -26,14 +26,17 @@ const worker = new Worker<GenerationJobData>(
+     await updateJob(jobId, { status: "running", provider_job_id: providerJobId });
+ 
+     const deadline = Date.now() + 15 * 60_000;
+-    let delay = request.kind === "video" ? 5_000 : 500;
++    let delay = request.kind === "video" || request.kind === "avatar" || request.kind === "lipsync" ? 5_000 : request.kind === "audio" || request.kind === "sfx" ? 500 : 2_000;
+     while (Date.now() < deadline) {
+       const r = await p.poll(providerJobId);
+       if (r.status === "succeeded") {
+         if (!r.outputBytes && !r.outputUrl) throw new Error("sucesso sem resultado");
+         const bytes = r.outputBytes ?? (await p.download(r.outputUrl!));
+-        const contentType = r.contentType ?? (request.kind === "video" ? "video/mp4" : request.kind === "audio" ? "audio/mpeg" : "image/png");
+-        const key = `${request.kind}s/${jobId}.${extFor(contentType)}`;
++        const isVideo = request.kind === "video" || request.kind === "avatar" || request.kind === "lipsync";
++        const isAudio = request.kind === "audio" || request.kind === "sfx";
++        const contentType = r.contentType ?? (isVideo ? "video/mp4" : isAudio ? "audio/wav" : "image/png");
++        const folder = isVideo ? "videos" : isAudio ? "audios" : "images";
++        const key = `${folder}/${jobId}.${extFor(contentType)}`;
+         const stored = await putObject(key, bytes, contentType);
+         await updateJob(jobId, {
+           status: "succeeded",
+diff --git a/apps/web/app/audio/page.tsx b/apps/web/app/audio/page.tsx
+index 9e2fc96..9eee5b0 100644
+--- a/apps/web/app/audio/page.tsx
++++ b/apps/web/app/audio/page.tsx
+@@ -2,19 +2,19 @@
+ 
+ import { useEffect, useState } from "react";
+ import { ApiError, api, fmtDate, usd, type Job, type Voice } from "@/lib/api";
+-import { History, Modal, ModelCard, ReferencePicker, type ModelOption } from "@/components/create";
++import { History, Modal, ModelCard, ReferencePicker } from "@/components/create";
+ import { useConfirm, useToast } from "@/components/Toasts";
+-
+-const MODELS: ModelOption[] = [
+-  { id: "seed-audio-1.0", name: "Seed Audio 1.0", provider: "seedaudio", badges: [{ text: "TOP", tone: "top" }, { text: "pt-BR" }, { text: "clona voz" }, { text: "60 min grátis", tone: "free" }], note: "o mesmo motor de voz do Higgsfield" },
+-  { id: "elevenlabs-v4", name: "ElevenLabs v4", provider: "elevenlabs", badges: [{ text: "clona voz" }, { text: "US$ 5+/mês", tone: "locked" }], locked: "opção B — assinatura ElevenLabs" },
+-];
++import { toOption, useModels, type CatalogModel } from "@/lib/models";
+ 
+ export default function AudioPage() {
+   const toast = useToast();
+   const ask = useConfirm();
+-  const [tab, setTab] = useState<"tts" | "voices">("tts");
+-  const [model, setModel] = useState(MODELS[0]);
++  const [tab, setTab] = useState<"tts" | "voices" | "sfx">("tts");
++  const models = useModels("audio");
++  const sfxModels = useModels("sfx");
++  const [modelId, setModelId] = useState("seed-audio-1.0");
++  const model: CatalogModel | undefined = models.find((m) => m.id === modelId) ?? models[0];
++  const paid = model?.provider === "elevenlabs";
+   const [voices, setVoices] = useState<Voice[]>([]);
+   const [voiceId, setVoiceId] = useState<string>("");
+   const [text, setText] = useState("");
+@@ -32,6 +32,7 @@ export default function AudioPage() {
+   const voice = voices.find((v) => v.id === voiceId) ?? null;
+   const request = () => ({
+     kind: "audio",
++    model: model?.id,
+     text,
+     voiceRef: voice ? { audioUrl: voice.reference_url } : undefined,
+     style: style || undefined,
+@@ -45,8 +46,8 @@ export default function AudioPage() {
+     setBusy(true);
+     try {
+       const { estimatedCostUsd } = await api<{ estimatedCostUsd: number }>("/estimate", { method: "POST", body: JSON.stringify({ request: request() }) });
+-      if (!await ask(`Gerar narração${voice ? ` com a voz "${voice.name}"` : ""}?\nCusto estimado ${usd(estimatedCostUsd)} — sai dos 60 min grátis.`)) return;
+-      await api<Job>("/generate", { method: "POST", body: JSON.stringify({ request: request() }) });
++      if (!await ask(`Gerar narração com ${model?.name}${voice ? ` e a voz "${voice.name}"` : ""}?\nCusto ${usd(estimatedCostUsd)} — ${paid ? "COBRADO (conta ElevenLabs)" : "sai dos 60 min grátis (cartão US$ 0)"}.`, paid ? "Gerar e cobrar" : "Gerar")) return;
++      await api<Job>("/generate", { method: "POST", body: JSON.stringify({ request: request(), allowPaid: paid }) });
+       setTick((t) => t + 1);
+       toast("Narração na fila — alguns segundos");
+     } catch (e: any) {
+@@ -67,11 +68,16 @@ export default function AudioPage() {
+           <button className={`panel-tab ${tab === "voices" ? "active" : ""}`} onClick={() => setTab("voices")}>
+             Vozes ({voices.length})
+           </button>
++          <button className={`panel-tab ${tab === "sfx" ? "active" : ""}`} onClick={() => setTab("sfx")}>
++            Efeito sonoro
++          </button>
+         </div>
+ 
+         {tab === "tts" ? (
+           <>
+-            <ModelCard model={model} options={MODELS} onChange={setModel} />
++            {model && <ModelCard model={toOption(model)} options={models.map(toOption)} onChange={(m) => setModelId(m.id)} />}
++            {model?.locked && <div className="empty" style={{ padding: 10 }}>{model.locked}</div>}
++            {model?.tip && <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.4 }}>💡 {model.tip}</div>}
+             <div className="field">
+               <label htmlFor="voice">Voz</label>
+               <select id="voice" className="select" value={voiceId} onChange={(e) => setVoiceId(e.target.value)}>
+@@ -112,12 +118,14 @@ export default function AudioPage() {
+                 <input value="sim" readOnly />
+               </div>
+             </div>
+-            <button className="btn primary gen" disabled={busy || !!model.locked} onClick={generate}>
+-              {busy ? "Enviando…" : "Gerar narração"} <span className="cost">{usd((Math.max(2, text.length / 15) / 60) * 0.03)}</span>
++            <button className="btn primary gen" disabled={busy || !model || !!model.locked} onClick={generate}>
++              {busy ? "Enviando…" : paid ? "Gerar (cobra)" : "Gerar narração"} <span className="cost">{usd((Math.max(2, text.length / 15) / 60) * (model?.price.perMin ?? 0.15))}</span>
+             </button>
+           </>
+-        ) : (
++        ) : tab === "voices" ? (
+           <VoicesPanel voices={voices} onNew={() => setNewVoice(true)} onDeleted={loadVoices} />
++        ) : (
++          <SfxPanel model={sfxModels[0]} onQueued={() => setTick((t) => t + 1)} />
+         )}
+       </aside>
+ 
+@@ -137,6 +145,58 @@ export default function AudioPage() {
+   );
+ }
+ 
++function SfxPanel({ model, onQueued }: { model?: CatalogModel; onQueued: () => void }) {
++  const toast = useToast();
++  const ask = useConfirm();
++  const [prompt, setPrompt] = useState("");
++  const [dur, setDur] = useState(5);
++  const [busy, setBusy] = useState(false);
++  const gen = async () => {
++    if (!model) return toast("Efeito sonoro indisponível", "bad");
++    if (model.locked) return toast(model.locked, "bad");
++    if (prompt.trim().length < 3) return toast("Descreva o som", "bad");
++    setBusy(true);
++    try {
++      const req = { kind: "sfx", model: model.id, prompt, durationSec: dur };
++      const { estimatedCostUsd } = await api<{ estimatedCostUsd: number }>("/estimate", { method: "POST", body: JSON.stringify({ request: req }) });
++      if (!await ask(`Gerar efeito sonoro de ${dur}s?\nCusto ${usd(estimatedCostUsd)} — COBRADO (conta ElevenLabs).`, "Gerar e cobrar")) return;
++      await api<Job>("/generate", { method: "POST", body: JSON.stringify({ request: req, allowPaid: true }) });
++      onQueued();
++      toast("Efeito na fila — alguns segundos");
++    } catch (e: any) {
++      toast(e.message, "bad");
++    } finally {
++      setBusy(false);
++    }
++  };
++  return (
++    <>
++      {model && <div className="model-card" style={{ cursor: "default" }}><span className="k">Modelo</span><span className="v">{model.name}</span><span className="badges">{model.badges.map((b) => <span key={b.text} className={`badge ${b.tone ?? ""}`}>{b.text}</span>)}</span></div>}
++      {model?.locked && <div className="empty" style={{ padding: 10 }}>{model.locked}</div>}
++      <div className="field">
++        <label htmlFor="sfx">Descreva o som (foley)</label>
++        <textarea id="sfx" className="textarea" rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Ex.: zíper de mochila fechando rápido, quarto silencioso, sem música" />
++      </div>
++      <div className="opts">
++        <div className="opt">
++          <label>Duração</label>
++          <select value={dur} onChange={(e) => setDur(+e.target.value)}>
++            {[1, 2, 3, 5, 8, 10, 15].map((n) => (
++              <option key={n} value={n}>
++                {n} s
++              </option>
++            ))}
++          </select>
++        </div>
++      </div>
++      <div className="muted" style={{ fontSize: 11.5 }}>💡 {model?.note}</div>
++      <button className="btn primary gen" disabled={busy || !model || !!model.locked} onClick={gen}>
++        {busy ? "Enviando…" : "Gerar efeito (cobra)"} <span className="cost">{usd(0.05)}</span>
++      </button>
++    </>
++  );
++}
++
+ function VoicesPanel({ voices, onNew, onDeleted }: { voices: Voice[]; onNew: () => void; onDeleted: () => void }) {
+   const toast = useToast();
+   const ask = useConfirm();
+diff --git a/apps/web/app/clone/page.tsx b/apps/web/app/clone/page.tsx
+new file mode 100644
+index 0000000..3cc78f0
+--- /dev/null
++++ b/apps/web/app/clone/page.tsx
+@@ -0,0 +1,147 @@
++"use client";
++
++import { useEffect, useMemo, useState } from "react";
++import { ApiError, api, usd, type Job, type Voice } from "@/lib/api";
++import { toOption, useModels, type CatalogModel } from "@/lib/models";
++import { History, ModelCard, ReferencePicker } from "@/components/create";
++import { useConfirm, useToast } from "@/components/Toasts";
++
++/**
++ * Clone: pessoa real falando sem gravar.
++ *  1) foto da pessoa + narração (voz clonada) → vídeo falando (OmniHuman / Kling Avatar / Seedance 2.5)
++ *  2) vídeo pronto + áudio → arruma a boca (Sync Lipsync)
++ */
++export default function ClonePage() {
++  const toast = useToast();
++  const ask = useConfirm();
++  const [tab, setTab] = useState<"avatar" | "lipsync">("avatar");
++  const avatars = useModels("avatar");
++  const lipsyncs = useModels("lipsync");
++  const videoModels = useModels("video");
++  // Seedance 2.5 também "clona": aceita áudio de referência
++  const options = useMemo(() => [...avatars, ...videoModels.filter((m) => m.audioRef)], [avatars, videoModels]);
++  const [modelId, setModelId] = useState("omnihuman-1.5");
++  const model: CatalogModel | undefined = options.find((m) => m.id === modelId) ?? options[0];
++
++  const [photo, setPhoto] = useState<string | null>(null);
++  const [audio, setAudio] = useState<string | null>(null);
++  const [video, setVideo] = useState<string | null>(null);
++  const [prompt, setPrompt] = useState("");
++  const [res, setRes] = useState<"720p" | "1080p">("1080p");
++  const [audioSec, setAudioSec] = useState(10);
++  const [pro, setPro] = useState(false);
++  const [busy, setBusy] = useState(false);
++  const [tick, setTick] = useState(0);
++  const [voices, setVoices] = useState<Voice[]>([]);
++  useEffect(() => {
++    api<{ voices: Voice[] }>("/voices").then((r) => setVoices(r.voices)).catch(() => {});
++  }, []);
++
++  // mede a duração do áudio escolhido (pra estimar custo)
++  useEffect(() => {
++    if (!audio) return;
++    const a = new Audio(audio);
++    a.addEventListener("loadedmetadata", () => Number.isFinite(a.duration) && setAudioSec(Math.ceil(a.duration)));
++  }, [audio]);
++
++  const lip = lipsyncs[0];
++  const request = () =>
++    tab === "avatar"
++      ? { kind: "avatar", model: model?.id, imageUrl: photo!, audioUrl: audio!, prompt: prompt || undefined, resolution: res, audioSec }
++      : { kind: "lipsync", model: lip?.id, videoUrl: video!, audioUrl: audio!, pro, videoSec: audioSec };
++
++  const generate = async () => {
++    if (!audio) return toast("Escolha o áudio (narração) primeiro — gere em Áudio com a voz clonada", "bad");
++    if (tab === "avatar" && !photo) return toast("Escolha a foto da pessoa", "bad");
++    if (tab === "lipsync" && !video) return toast("Escolha o vídeo que vai receber a boca", "bad");
++    const m = tab === "avatar" ? model : lip;
++    if (!m) return;
++    if (m.locked) return toast(m.locked, "bad");
++    setBusy(true);
++    try {
++      const { estimatedCostUsd } = await api<{ estimatedCostUsd: number }>("/estimate", { method: "POST", body: JSON.stringify({ request: request() }) });
++      const paid = m.provider === "fal" || m.gate === "reserve";
++      if (!await ask(`${tab === "avatar" ? "Gerar a pessoa falando" : "Sincronizar a boca"} com ${m.name} (~${audioSec}s)?\nCusto ${usd(estimatedCostUsd)} — ${paid ? "COBRADO no cartão" : "sai da cota grátis"}.\n\nLembrete: só com autorização da pessoa.`, paid ? "Gerar e cobrar" : "Gerar")) return;
++      await api<Job>("/generate", { method: "POST", body: JSON.stringify({ request: request(), allowPaid: paid }) });
++      setTick((t) => t + 1);
++      toast("Na fila — leva 1 a 4 minutos");
++    } catch (e: any) {
++      if (e instanceof ApiError && e.status === 402) toast(`Guarda de custo: ${usd(e.body.estimatedCostUsd)} acima do limite ${usd(e.body.maxJobCostUsd)}`, "bad");
++      else toast(e.message, "bad");
++    } finally {
++      setBusy(false);
++    }
++  };
++
++  return (
++    <div className="create">
++      <aside className="panel" aria-label="Clone">
++        <div className="panel-tabs">
++          <button className={`panel-tab ${tab === "avatar" ? "active" : ""}`} onClick={() => setTab("avatar")}>
++            Foto + voz → falando
++          </button>
++          <button className={`panel-tab ${tab === "lipsync" ? "active" : ""}`} onClick={() => setTab("lipsync")}>
++            Arrumar a boca
++          </button>
++        </div>
++
++        {tab === "avatar" ? (
++          <>
++            {model && <ModelCard model={toOption(model)} options={options.map(toOption)} onChange={(m) => setModelId(m.id)} />}
++            {model?.locked && <div className="empty" style={{ padding: 10 }}>{model.locked}</div>}
++            <ReferencePicker kind="image" label="Foto da pessoa" value={photo} onChange={setPhoto} hint="rosto de frente, bem iluminado, sem óculos escuros (pode ser uma imagem gerada com Nano Banana 2.1 + referências)" />
++          </>
++        ) : (
++          <>
++            {lip && <ModelCard model={toOption(lip)} options={lipsyncs.map(toOption)} onChange={() => {}} />}
++            {lip?.locked && <div className="empty" style={{ padding: 10 }}>{lip.locked}</div>}
++            <ReferencePicker kind="video" label="Vídeo pronto" value={video} onChange={setVideo} accept="video/*" hint="o vídeo onde a boca vai ser refeita" />
++          </>
++        )}
++
++        <ReferencePicker kind="audio" label="Narração (voz clonada)" value={audio} onChange={setAudio} accept="audio/*" hint={`gere em Áudio → Texto → fala com a voz da pessoa${voices.length ? ` (${voices.length} voz(es) cadastrada(s))` : ""}`} />
++
++        {tab === "avatar" ? (
++          <>
++            <div className="field">
++              <label htmlFor="cp">Direção (opcional)</label>
++              <input id="cp" className="input" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Ex.: fala olhando pra câmera, sorri no final, gestos leves com as mãos" />
++            </div>
++            <div className="opts">
++              <div className="opt">
++                <label>Qualidade</label>
++                <select value={res} onChange={(e) => setRes(e.target.value as any)}>
++                  {(model?.resolutions ?? ["720p", "1080p"]).map((r) => (
++                    <option key={r}>{r}</option>
++                  ))}
++                </select>
++              </div>
++              <div className="opt" title="medido do áudio escolhido">
++                <label>Duração</label>
++                <input value={`${audioSec} s`} readOnly />
++              </div>
++            </div>
++          </>
++        ) : (
++          <div className="opts">
++            <div className="opt">
++              <label>Qualidade</label>
++              <select value={pro ? "pro" : "std"} onChange={(e) => setPro(e.target.value === "pro")}>
++                <option value="std">lipsync-2 (US$ 3/min)</option>
++                <option value="pro">lipsync-2-pro (US$ 5/min)</option>
++              </select>
++            </div>
++          </div>
++        )}
++
++        <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.4 }}>
++          💡 Boca fora de sincronia: gere o áudio antes e use um modelo que anima pela voz real (Seedance 2.5 ou OmniHuman). Rosto que muda no meio: revise e use só os trechos bons.
++        </div>
++        <button className="btn primary gen" disabled={busy} onClick={generate}>
++          {busy ? "Enviando…" : tab === "avatar" ? "Gerar pessoa falando" : "Sincronizar boca"}
++        </button>
++      </aside>
++      <History kind="video" refreshKey={tick} />
++    </div>
++  );
++}
+diff --git a/apps/web/app/globals.css b/apps/web/app/globals.css
+index 5c6ad2c..5393eef 100644
+--- a/apps/web/app/globals.css
++++ b/apps/web/app/globals.css
+@@ -344,3 +344,25 @@ audio.player { width: 100%; height: 34px; filter: invert(0.9) hue-rotate(180deg)
+ .card-preview b { font-size: 18px; font-weight: 800; line-height: 1.05; letter-spacing: -0.3px; text-shadow: 0 2px 6px rgba(0,0,0,0.7); }
+ .card-preview i { font-size: 10.5px; opacity: 0.85; font-style: italic; }
+ .card-preview span { font-size: 10px; font-weight: 700; background: var(--wait); color: #141414; padding: 3px 8px; border-radius: 4px; justify-self: center; }
++
++/* ───────── Gastos ───────── */
++.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
++.kpi { display: grid; gap: 4px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--panel); }
++.kpi .k { font-size: 12px; color: var(--ink-2); }
++.kpi .v { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
++.kpi .s { font-size: 12px; color: var(--ink-2); }
++.kpi.ok .v { color: var(--ok); }
++.kpi.warn .v { color: var(--coral); }
++.bar { height: 10px; border-radius: 999px; background: var(--line); overflow: hidden; }
++.bar span { display: block; height: 100%; background: var(--ok); border-radius: 999px; transition: width .4s; }
++.bar span.hot { background: var(--coral); }
++.spark { display: flex; gap: 3px; align-items: flex-end; height: 120px; padding: 8px 4px 0; border-bottom: 1px solid var(--line); }
++.spark .col { flex: 1; height: 100%; display: flex; align-items: flex-end; }
++.spark .col span { display: block; width: 100%; background: var(--coral); border-radius: 3px 3px 0 0; opacity: .85; }
++.spark .col span.zero { background: var(--line-strong); }
++.spark .col:hover span { opacity: 1; }
++.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
++.tbl th, .tbl td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; }
++.tbl th { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-2); font-weight: 600; }
++.tbl .r { text-align: right; }
++.tbl tbody tr:hover { background: var(--panel-2); }
+diff --git a/apps/web/app/image/page.tsx b/apps/web/app/image/page.tsx
+index 9bad3a8..3350dab 100644
+--- a/apps/web/app/image/page.tsx
++++ b/apps/web/app/image/page.tsx
+@@ -1,26 +1,22 @@
+ "use client";
+ 
+ import { useRouter } from "next/navigation";
+-import { useState } from "react";
++import { useMemo, useState } from "react";
+ import { ApiError, api, usd, type Job } from "@/lib/api";
+-import { History, ModelCard, ReferencePicker, type ModelOption } from "@/components/create";
++import { toOption, useModels, type CatalogModel } from "@/lib/models";
++import { History, ModelCard, ReferencePicker } from "@/components/create";
+ import { useConfirm, useToast } from "@/components/Toasts";
+ 
+-const MODELS: ModelOption[] = [
+-  { id: "seedream-4-5-251128", name: "Seedream 4.5", provider: "byteplus", badges: [{ text: "TOP", tone: "top" }, { text: "2K" }, { text: "200 grátis", tone: "free" }], note: "texto→imagem e imagem→imagem, 2K, texto legível" },
+-  { id: "seedream-4-0-250828", name: "Seedream 4.0", provider: "byteplus", badges: [{ text: "2K" }, { text: "200 grátis", tone: "free" }], note: "mais barato, ótimo pra storyboard" },
+-  { id: "seedream-5-0-lite-251128", name: "Seedream 5.0 lite", provider: "byteplus", badges: [{ text: "50 grátis", tone: "free" }] },
+-  { id: "seedream-5-0-pro", name: "Seedream 5.0 pro", provider: "byteplus", badges: [{ text: "4K" }, { text: "pago", tone: "locked" }], locked: "pausado pelo modo cota grátis — ativar exige pagamento" },
+-  { id: "nano-banana-pro", name: "Nano Banana Pro (Google)", provider: "google", badges: [{ text: "em breve", tone: "locked" }], locked: "fase 2 — conta Google AI Studio" },
+-];
+-
+ const SIZES: Record<string, string> = { "9:16": "1440x2560", "16:9": "2560x1440", "1:1": "2048x2048", "4:5": "1638x2048", "3:4": "1728x2304" };
+ 
+ export default function ImagePage() {
+   const router = useRouter();
+   const toast = useToast();
+   const ask = useConfirm();
+-  const [model, setModel] = useState(MODELS[0]);
++  const models = useModels("image");
++  const upscalers = useModels("upscale");
++  const [modelId, setModelId] = useState("seedream-4-5-251128");
++  const model: CatalogModel | undefined = useMemo(() => models.find((m) => m.id === modelId) ?? models[0], [models, modelId]);
+   const [prompt, setPrompt] = useState("");
+   const [ref, setRef] = useState<string | null>(null);
+   const [ratio, setRatio] = useState("9:16");
+@@ -28,16 +24,18 @@ export default function ImagePage() {
+   const [busy, setBusy] = useState(false);
+   const [tick, setTick] = useState(0);
+ 
+-  const request = () => ({ kind: "image", model: model.provider === "byteplus" ? model.id : undefined, prompt, size: SIZES[ratio], referenceImages: ref ? [ref] : undefined });
++  const paid = model?.provider === "fal";
++  const request = () => ({ kind: "image", model: model?.id, prompt, size: SIZES[ratio], referenceImages: ref ? [ref] : undefined });
+ 
+   const generate = async () => {
++    if (!model) return;
+     if (prompt.trim().length < 3) return toast("Descreva a imagem primeiro", "bad");
+     setBusy(true);
+     try {
+       const { estimatedCostUsd } = await api<{ estimatedCostUsd: number }>("/estimate", { method: "POST", body: JSON.stringify({ request: request() }) });
+       const total = estimatedCostUsd * count;
+-      if (!await ask(`Gerar ${count} imagem(ns) com ${model.name}?\nCusto estimado ${usd(total)} — sai da cota grátis.`)) return;
+-      for (let i = 0; i < count; i++) await api<Job>("/generate", { method: "POST", body: JSON.stringify({ request: request() }) });
++      if (!await ask(`Gerar ${count} imagem(ns) com ${model.name}?\nCusto ${usd(total)} — ${paid ? "COBRADO no cartão (fal.ai)" : "sai da cota grátis (cartão: US$ 0)"}.`, paid ? "Gerar e cobrar" : "Gerar")) return;
++      for (let i = 0; i < count; i++) await api<Job>("/generate", { method: "POST", body: JSON.stringify({ request: request(), allowPaid: paid }) });
+       setTick((t) => t + 1);
+       toast(`${count} imagem(ns) na fila`);
+     } catch (e: any) {
+@@ -48,6 +46,22 @@ export default function ImagePage() {
+     }
+   };
+ 
++  const upscale = async (j: Job) => {
++    const up = upscalers[0];
++    if (!up) return toast("Upscale não disponível", "bad");
++    if (up.locked) return toast(up.locked, "bad");
++    try {
++      const req = { kind: "upscale", model: up.id, imageUrl: j.output_url!, factor: 2, inputMp: 3.7 };
++      const { estimatedCostUsd } = await api<{ estimatedCostUsd: number }>("/estimate", { method: "POST", body: JSON.stringify({ request: req }) });
++      if (!await ask(`Melhorar essa imagem (estilo Magnific, 2×) com ${up.name}?\nCusto ${usd(estimatedCostUsd)} — COBRADO no cartão (fal.ai).`, "Melhorar e cobrar")) return;
++      await api<Job>("/generate", { method: "POST", body: JSON.stringify({ request: req, allowPaid: true }) });
++      setTick((t) => t + 1);
++      toast("Upscale na fila — ~1 minuto");
++    } catch (e: any) {
++      toast(e.message, "bad");
++    }
++  };
++
+   return (
+     <div className="create">
+       <aside className="panel" aria-label="Criar imagem">
+@@ -57,8 +71,9 @@ export default function ImagePage() {
+             Editar
+           </button>
+         </div>
+-        <ModelCard model={model} options={MODELS} onChange={setModel} />
+-        <ReferencePicker kind="image" label="Referência (opcional)" value={ref} onChange={setRef} hint="imagem base para variação ou consistência" />
++        {model && <ModelCard model={toOption(model)} options={models.map(toOption)} onChange={(m) => setModelId(m.id)} />}
++        {model?.locked && <div className="empty" style={{ padding: 10 }}>{model.locked}</div>}
++        <ReferencePicker kind="image" label="Referência (opcional)" value={ref} onChange={setRef} hint="imagem base para variação, edição ou consistência de personagem" />
+         <div className="field">
+           <label htmlFor="prompt">Descreva a imagem</label>
+           <textarea id="prompt" className="textarea" rows={5} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Ex.: Comic book style, bold ink outlines: a young Brazilian woman packing orders in a small home office, morning light, vertical composition" />
+@@ -83,18 +98,24 @@ export default function ImagePage() {
+             </select>
+           </div>
+         </div>
+-        <button className="btn primary gen" disabled={busy || !!model.locked} onClick={generate}>
+-          {busy ? "Enviando…" : "Gerar"} <span className="cost">{usd(0.04 * count)}</span>
++        <button className="btn primary gen" disabled={busy || !model || !!model.locked} onClick={generate}>
++          {busy ? "Enviando…" : paid ? "Gerar (cobra)" : "Gerar"} <span className="cost">{usd((model?.price.perImage ?? 0.04) * count)}</span>
+         </button>
++        {model && !paid && <span className="muted" style={{ fontSize: 11 }}>sai da cota grátis da BytePlus · cartão US$ 0</span>}
+       </aside>
+ 
+       <History
+         kind="image"
+         refreshKey={tick}
+         actions={(j) => (
+-          <button className="btn primary" onClick={() => router.push(`/video?frame=${encodeURIComponent(j.output_url!)}`)}>
+-            Animar esta imagem
+-          </button>
++          <>
++            <button className="btn primary" onClick={() => router.push(`/video?frame=${encodeURIComponent(j.output_url!)}`)}>
++              Animar esta imagem
++            </button>
++            <button className="btn ghost" onClick={() => upscale(j)} title={upscalers[0]?.locked ?? "aumenta resolução e detalhe (estilo Magnific)"}>
++              Melhorar (Magnific)
++            </button>
++          </>
+         )}
+       />
+     </div>
+diff --git a/apps/web/app/projects/[id]/page.tsx b/apps/web/app/projects/[id]/page.tsx
+index d4b7085..510a733 100644
+--- a/apps/web/app/projects/[id]/page.tsx
++++ b/apps/web/app/projects/[id]/page.tsx
+@@ -6,34 +6,35 @@ import { ApiError, api, isActive, isDone, usd, type Job, type Project, type Scen
+ import { useConfirm, useToast } from "@/components/Toasts";
+ 
+ import { ReferencePicker } from "@/components/create";
+-
+-/** motores de vídeo selecionáveis no projeto */
+-const VIDEO_MODELS = [
+-  { id: "seedance-1-0-pro-fast-251015", provider: "byteplus", label: "Seedance 1.0 fast · 480p (grátis)", resolution: "480p" },
+-  { id: "seedance-1-0-pro-fast-251015:720p", provider: "byteplus", label: "Seedance 1.0 fast · 720p (grátis)", resolution: "720p" },
+-  { id: "seedance-1-0-pro-fast-251015:1080p", provider: "byteplus", label: "Seedance 1.0 fast · 1080p (grátis)", resolution: "1080p" },
+-  { id: "dreamina-seedance-2-5-260628:720p", provider: "byteplus", label: "Seedance 2.5 · 720p (US$ 30 de reserva)", resolution: "720p" },
+-  { id: "dreamina-seedance-2-5-260628:1080p", provider: "byteplus", label: "Seedance 2.5 · 1080p (US$ 30 de reserva)", resolution: "1080p" },
+-  { id: "kling-4:720p", provider: "fal", label: "Kling 4.0 · 720p (fal.ai, pago)", resolution: "720p" },
+-  { id: "kling-4:1080p", provider: "fal", label: "Kling 4.0 · 1080p (fal.ai, pago)", resolution: "1080p" },
+-] as const;
+-const modelOf = (p: Project | null) => VIDEO_MODELS.find((m) => m.id === p?.video_model) ?? VIDEO_MODELS[0];
++import { useModels, type CatalogModel, type Res } from "@/lib/models";
++
++/** opções do seletor "Motor de vídeo": catálogo × resoluções → "id:res" */
++type VideoOpt = { id: string; model: CatalogModel; resolution: Res; label: string; locked?: string };
++function videoOptions(models: CatalogModel[]): VideoOpt[] {
++  const out: VideoOpt[] = [];
++  for (const m of models) {
++    for (const r of m.resolutions ?? ["720p"]) {
++      const per = m.price.perSec?.[r] ?? m.price.perSec?.["1080p"] ?? 0;
++      const tag = m.locked ? (m.gate === "reserve" ? "US$ 30 reserva" : m.gate === "fal" ? "fal.ai, pago" : "travado") : m.free ? "grátis" : "pago";
++      out.push({ id: `${m.id}:${r}`, model: m, resolution: r, label: `${m.name} · ${r} · US$ ${(per * 5).toFixed(2)}/5 s (${tag})`, locked: m.locked });
++    }
++  }
++  return out;
++}
++const DEFAULT_VIDEO = "seedance-1-0-pro-fast-251015:720p";
++const parseVideoModel = (v: string | null | undefined, opts: VideoOpt[]) => opts.find((o) => o.id === v) ?? opts.find((o) => o.id === DEFAULT_VIDEO) ?? opts[0];
+ 
+ const IMAGE_REQ = (prompt: string) => ({ kind: "image", prompt, size: "1440x2560" });
+-const VIDEO_REQ = (prompt: string, firstFrame: string, durationSec: number, p: Project | null) => {
+-  const m = modelOf(p);
+-  return {
+-    kind: "video",
+-    model: m.provider === "byteplus" ? m.id.split(":")[0] : undefined,
+-    prompt,
+-    firstFrame,
+-    ratio: "9:16",
+-    resolution: m.resolution,
+-    durationSec,
+-    audio: m.id.startsWith("dreamina") ? false : undefined,
+-  };
+-};
+-const providerOf = (p: Project | null) => modelOf(p).provider;
++const VIDEO_REQ = (prompt: string, firstFrame: string, durationSec: number, opt: VideoOpt | undefined) => ({
++  kind: "video",
++  model: opt?.model.id,
++  prompt,
++  firstFrame,
++  ratio: "9:16",
++  resolution: opt?.resolution ?? "720p",
++  durationSec: Math.min(durationSec, Math.max(...(opt?.model.durations ?? [10]))),
++  audio: opt?.model.nativeAudio ? false : undefined,
++});
+ const AUDIO_REQ = (text: string, voice: Voice | null) => ({
+   kind: "audio",
+   text,
+@@ -48,6 +49,10 @@ export default function ProjectPage() {
+   const toast = useToast();
+   const ask = useConfirm();
+   const [project, setProject] = useState<Project | null>(null);
++  const videoModels = useModels("video");
++  const vopts = useMemo(() => videoOptions(videoModels), [videoModels]);
++  const vopt = useMemo(() => parseVideoModel(project?.video_model, vopts), [project?.video_model, vopts]);
++  const paidVideo = !!vopt && (vopt.model.provider === "fal" || vopt.model.gate === "reserve");
+   const [selected, setSelected] = useState<string | null>(null);
+   const [busy, setBusy] = useState<string | null>(null);
+   const [theme, setTheme] = useState("");
+@@ -167,7 +172,7 @@ export default function ProjectPage() {
+       kind === "image"
+         ? IMAGE_REQ(scene.image_prompt ?? "")
+         : kind === "video"
+-          ? VIDEO_REQ(scene.motion_prompt ?? "", scene.image_job?.output_url ?? "", scene.duration_sec ?? 5, project)
++          ? VIDEO_REQ(scene.motion_prompt ?? "", scene.image_job?.output_url ?? "", scene.duration_sec ?? 5, vopt)
+           : AUDIO_REQ(scene.script ?? "", project.voice);
+     if (kind === "image" && !(scene.image_prompt ?? "").trim()) return toast("Escreve o prompt da imagem primeiro", "bad");
+     if (kind === "video" && !isDone(scene.image_job)) return toast("Gera a imagem antes do vídeo", "bad");
+@@ -176,12 +181,13 @@ export default function ProjectPage() {
+ 
+     try {
+       if (opts.confirmEach) {
+-        const cost = await estimate(request, kind === "video" ? providerOf(project) : undefined);
+-        if (!await ask(`Gerar ${KIND_LABEL[kind]} da cena ${scene.position + 1}?\nCusto estimado ${usd(cost)} (sai da cota grátis).`)) return;
++        const cost = await estimate(request);
++        const paid = kind === "video" && paidVideo;
++        if (!await ask(`Gerar ${KIND_LABEL[kind]} da cena ${scene.position + 1}?\nCusto ${usd(cost)} — ${paid ? "COBRADO no cartão" : "sai da cota grátis (cartão US$ 0)"}.`, paid ? "Gerar e cobrar" : "Gerar")) return;
+       }
+       await api<Job>("/generate", {
+         method: "POST",
+-        body: JSON.stringify({ projectId: project.id, sceneId: scene.id, provider: kind === "video" ? providerOf(project) : undefined, request }),
++        body: JSON.stringify({ projectId: project.id, sceneId: scene.id, request, allowPaid: kind === "video" && paidVideo }),
+       });
+       await load();
+     } catch (e: any) {
+@@ -204,11 +210,12 @@ export default function ProjectPage() {
+     setBusy(kind);
+     try {
+       const costs = await Promise.all(
+-        list.map((s) => estimate(kind === "image" ? IMAGE_REQ(s.image_prompt!) : kind === "video" ? VIDEO_REQ(s.motion_prompt!, s.image_job!.output_url!, s.duration_sec ?? 5, project) : AUDIO_REQ(s.script, project.voice), kind === "video" ? providerOf(project) : undefined)),
++        list.map((s) => estimate(kind === "image" ? IMAGE_REQ(s.image_prompt!) : kind === "video" ? VIDEO_REQ(s.motion_prompt!, s.image_job!.output_url!, s.duration_sec ?? 5, vopt) : AUDIO_REQ(s.script, project.voice))),
+       );
+       const total = costs.reduce((a, b) => a + b, 0);
+       const label = kind === "image" ? "imagens" : kind === "video" ? "vídeos" : "narrações";
+-      if (!await ask(`Gerar ${list.length} ${label}${kind === "audio" && project.voice ? ` com a voz "${project.voice.name}"` : ""}?\nCusto estimado total ${usd(total)} (sai da cota grátis).`)) return;
++      const paid = kind === "video" && paidVideo;
++      if (!await ask(`Gerar ${list.length} ${label}${kind === "video" && vopt ? ` com ${vopt.model.name} ${vopt.resolution}` : ""}${kind === "audio" && project.voice ? ` com a voz "${project.voice.name}"` : ""}?\nCusto total ${usd(total)} — ${paid ? "COBRADO no cartão" : "sai da cota grátis (cartão US$ 0)"}.`, paid ? "Gerar e cobrar" : "Gerar")) return;
+       for (const s of list) await generate(s, kind, { confirmEach: false });
+       toast(`${list.length} ${label} na fila`);
+     } finally {
+@@ -340,13 +347,14 @@ export default function ProjectPage() {
+         <div className="brief" style={{ gridTemplateColumns: "1fr 1fr 1fr 1fr" }}>
+           <div className="field">
+             <label htmlFor="vmodel">Motor de vídeo</label>
+-            <select id="vmodel" className="select" value={modelOf(project).id} onChange={(e) => patchProject({ video_model: e.target.value })}>
+-              {VIDEO_MODELS.map((m) => (
+-                <option key={m.id} value={m.id}>
+-                  {m.label}
++            <select id="vmodel" className="select" value={vopt?.id ?? DEFAULT_VIDEO} onChange={(e) => patchProject({ video_model: e.target.value })}>
++              {vopts.map((o) => (
++                <option key={o.id} value={o.id} disabled={!!o.locked} title={o.locked}>
++                  {o.label}
+                 </option>
+               ))}
+             </select>
++            {vopt?.model.tip && <span className="muted" style={{ fontSize: 11 }}>{vopt.model.tip}</span>}
+           </div>
+           <div className="field">
+             <label htmlFor="cstyle">Legenda</label>
+@@ -522,7 +530,7 @@ export default function ProjectPage() {
+           <div className="editor-side">
+             {sel.type !== "card" && <JobBlock title="Imagem" job={sel.image_job} onGo={() => generate(sel, "image")} canGo={!!(sel.image_prompt ?? "").trim()} />}
+             {sel.type !== "card" && <JobBlock title="Vídeo" job={sel.video_job} onGo={() => generate(sel, "video")} canGo={isDone(sel.image_job) && !!(sel.motion_prompt ?? "").trim()} hint={!isDone(sel.image_job) ? "precisa da imagem primeiro" : undefined} />}
+-            {sel.type !== "card" && isDone(sel.video_job) && <div className="muted" style={{ fontSize: 11 }}>motor: {modelOf(project).label}</div>}
++            {sel.type !== "card" && isDone(sel.video_job) && <div className="muted" style={{ fontSize: 11 }}>motor: {sel.video_job?.request?.model ?? vopt?.label ?? ""}</div>}
+             <JobBlock title="Narração" job={sel.audio_job} onGo={() => generate(sel, "audio")} canGo={!!(sel.script ?? "").trim()} hint="usa o texto da narração" />
+             {isDone(sel.audio_job) && <audio className="player" src={sel.audio_job!.output_url!} controls preload="none" />}
+           </div>
+diff --git a/apps/web/app/usage/page.tsx b/apps/web/app/usage/page.tsx
+new file mode 100644
+index 0000000..3fa520f
+--- /dev/null
++++ b/apps/web/app/usage/page.tsx
+@@ -0,0 +1,225 @@
++"use client";
++
++import { useEffect, useState } from "react";
++import { api, fmtDate, usd } from "@/lib/api";
++
++type Usage = {
++  days: { day: string; usd: number; jobs: number }[];
++  months: { month: string; usd: number; jobs: number }[];
++  byModel: { provider: string; kind: string; model: string | null; name: string; jobs: number; usd: number; seconds: number; monthUsd: number; monthJobs: number; billed: boolean }[];
++  recent: { id: string; kind: string; provider: string; model: string | null; name: string; usd: number; created_at: string; project_id: string | null }[];
++  quotas: { id: string; name: string; unit: string; used: number; free: number; pctUsed: number; lockAt?: number }[];
++  billedUsd: number;
++  billedMonthUsd: number;
++  nominalMonthUsd: number;
++  voiceFreeMinutes: number;
++  maxJobCostUsd: number;
++  providers: { byteplus: boolean; seedaudio: boolean; fal: boolean; seedance2: boolean };
++};
++
++const BRL = 5.58; // dólar aproximado (nov/2026) — só pra leitura rápida
++const brl = (v: number) => `R$ ${(v * BRL).toFixed(2).replace(".", ",")}`;
++const KIND: Record<string, string> = { image: "imagem", video: "vídeo", audio: "voz", avatar: "clone", upscale: "upscale", lipsync: "lip-sync", sfx: "efeito" };
++const PROV: Record<string, string> = { byteplus: "BytePlus", fal: "fal.ai", seedaudio: "Seed Audio", elevenlabs: "ElevenLabs" };
++
++export default function UsagePage() {
++  const [u, setU] = useState<Usage | null>(null);
++  useEffect(() => {
++    const load = () => api<Usage>("/usage").then(setU).catch(() => {});
++    load();
++    const t = setInterval(load, 15000);
++    return () => clearInterval(t);
++  }, []);
++
++  if (!u) return <div className="page-pad muted">Carregando…</div>;
++  const month = new Date().toISOString().slice(0, 7);
++  const thisMonth = u.months.find((m) => m.month === month) ?? { month, usd: 0, jobs: 0 };
++  const maxDay = Math.max(0.01, ...u.days.map((d) => d.usd));
++  // últimos 30 dias, preenchendo vazios
++  const days: { day: string; usd: number; jobs: number }[] = [];
++  for (let i = 29; i >= 0; i--) {
++    const d = new Date(Date.now() - i * 864e5).toISOString().slice(0, 10);
++    days.push(u.days.find((x) => x.day === d) ?? { day: d, usd: 0, jobs: 0 });
++  }
++
++  return (
++    <div className="page-pad" style={{ display: "grid", gap: 20, maxWidth: 1100 }}>
++      <div>
++        <h1 style={{ margin: 0, fontSize: 22 }}>Gastos</h1>
++        <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>
++          Preço de tabela de cada geração × o que sai do cartão de verdade. BytePlus está em modo &quot;só crédito grátis&quot; e o Seed Audio tem 60 min grátis — por isso o cobrado fica em zero até você liberar um provedor pago.
++        </p>
++      </div>
++
++      <div className="kpis">
++        <Kpi label="Cobrado no cartão (mês)" value={usd(u.billedMonthUsd)} sub={brl(u.billedMonthUsd)} tone={u.billedMonthUsd > 0 ? "warn" : "ok"} />
++        <Kpi label="Cobrado no cartão (total)" value={usd(u.billedUsd)} sub={brl(u.billedUsd)} tone={u.billedUsd > 0 ? "warn" : "ok"} />
++        <Kpi label="Valor de tabela (mês)" value={usd(thisMonth.usd)} sub={`${thisMonth.jobs} gerações · ${brl(thisMonth.usd)}`} />
++        <Kpi label="Se fosse no Higgsfield" value={usd(thisMonth.usd * 1.35)} sub="≈ +35% nos mesmos modelos" />
++      </div>
++
++      <section className="area">
++        <div className="area-head">
++          <h2>Cotas grátis</h2>
++          <span className="muted" style={{ fontSize: 12 }}>
++            quando acabam, os modelos pausam (BytePlus) ou a trava do app segura (voz: {u.voiceFreeMinutes} min)
++          </span>
++        </div>
++        <div style={{ display: "grid", gap: 10 }}>
++          {u.quotas.map((q) => (
++            <div key={q.id} style={{ display: "grid", gridTemplateColumns: "220px 1fr 160px", gap: 12, alignItems: "center", fontSize: 13 }}>
++              <b>{q.name}</b>
++              <div className="bar">
++                <span style={{ width: `${q.pctUsed}%` }} className={q.pctUsed > 85 ? "hot" : ""} />
++              </div>
++              <span className="muted">
++                {fmt(q.used)} / {fmt(q.free)} {q.unit} ({Math.round(q.pctUsed)}%)
++              </span>
++            </div>
++          ))}
++        </div>
++      </section>
++
++      <section className="area">
++        <div className="area-head">
++          <h2>Por dia (30 dias, valor de tabela)</h2>
++          <span className="muted" style={{ fontSize: 12 }}>passe o mouse pra ver o dia</span>
++        </div>
++        <div className="spark">
++          {days.map((d) => (
++            <div key={d.day} className="col" title={`${d.day.slice(8)}/${d.day.slice(5, 7)} · ${usd(d.usd)} · ${d.jobs} gerações`}>
++              <span style={{ height: `${Math.max(2, (d.usd / maxDay) * 100)}%` }} className={d.usd === 0 ? "zero" : ""} />
++            </div>
++          ))}
++        </div>
++      </section>
++
++      <section className="area">
++        <div className="area-head">
++          <h2>Por modelo</h2>
++        </div>
++        <table className="tbl">
++          <thead>
++            <tr>
++              <th>Modelo</th>
++              <th>Tipo</th>
++              <th>Provedor</th>
++              <th className="r">Gerações (mês)</th>
++              <th className="r">Tabela (mês)</th>
++              <th className="r">Tabela (total)</th>
++              <th className="r">Cobra?</th>
++            </tr>
++          </thead>
++          <tbody>
++            {u.byModel.map((m, i) => (
++              <tr key={i}>
++                <td>{m.name}</td>
++                <td>{KIND[m.kind] ?? m.kind}</td>
++                <td>{PROV[m.provider] ?? m.provider}</td>
++                <td className="r">
++                  {m.monthJobs} <span className="muted">/ {m.jobs}</span>
++                </td>
++                <td className="r">{usd(m.monthUsd)}</td>
++                <td className="r">{usd(m.usd)}</td>
++                <td className="r">{m.billed ? <span className="badge locked">cartão</span> : <span className="badge free">grátis</span>}</td>
++              </tr>
++            ))}
++            {u.byModel.length === 0 && (
++              <tr>
++                <td colSpan={7} className="muted">
++                  Nada gerado ainda.
++                </td>
++              </tr>
++            )}
++          </tbody>
++        </table>
++      </section>
++
++      <section className="area">
++        <div className="area-head">
++          <h2>Por mês</h2>
++        </div>
++        <table className="tbl">
++          <thead>
++            <tr>
++              <th>Mês</th>
++              <th className="r">Gerações</th>
++              <th className="r">Valor de tabela</th>
++              <th className="r">em reais</th>
++            </tr>
++          </thead>
++          <tbody>
++            {u.months.map((m) => (
++              <tr key={m.month}>
++                <td>{m.month}</td>
++                <td className="r">{m.jobs}</td>
++                <td className="r">{usd(m.usd)}</td>
++                <td className="r">{brl(m.usd)}</td>
++              </tr>
++            ))}
++          </tbody>
++        </table>
++      </section>
++
++      <section className="area">
++        <div className="area-head">
++          <h2>Últimas gerações</h2>
++        </div>
++        <table className="tbl">
++          <thead>
++            <tr>
++              <th>Quando</th>
++              <th>Modelo</th>
++              <th>Tipo</th>
++              <th className="r">Tabela</th>
++            </tr>
++          </thead>
++          <tbody>
++            {u.recent.map((r) => (
++              <tr key={r.id}>
++                <td className="muted">{fmtDate(r.created_at)}</td>
++                <td>{r.name}</td>
++                <td>{KIND[r.kind] ?? r.kind}</td>
++                <td className="r">{usd(r.usd)}</td>
++              </tr>
++            ))}
++          </tbody>
++        </table>
++      </section>
++
++      <section className="area">
++        <div className="area-head">
++          <h2>Provedores</h2>
++        </div>
++        <div style={{ display: "grid", gap: 6, fontSize: 13 }}>
++          <Row ok={u.providers.byteplus} label="BytePlus ModelArk (Seedream, Seedance 1.0)" note="cota grátis · modo só crédito grátis" />
++          <Row ok={u.providers.seedance2} label="Seedance 2.x (2.5 / 2.0)" note="exige fundo de reserva US$ 30 → ARK_ALLOW_SEEDANCE_2=true" />
++          <Row ok={u.providers.seedaudio} label="Seed Audio (voz, clonagem)" note="60 min grátis · depois US$ 0,15/min · trava do app em 55 min" />
++          <Row ok={u.providers.fal} label="fal.ai (Kling, GPT Image, Nano Banana, Grok, upscale, avatar, lipsync)" note="pré-pago, mínimo US$ 10 → FAL_KEY" />
++        </div>
++      </section>
++    </div>
++  );
++}
++
++const fmt = (n: number) => (n >= 10000 ? `${(n / 1000).toFixed(0)}k` : n % 1 ? n.toFixed(1) : String(n));
++
++function Kpi({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "ok" | "warn" }) {
++  return (
++    <div className={`kpi ${tone ?? ""}`}>
++      <span className="k">{label}</span>
++      <span className="v">{value}</span>
++      {sub && <span className="s">{sub}</span>}
++    </div>
++  );
++}
++
++function Row({ ok, label, note }: { ok: boolean; label: string; note: string }) {
++  return (
++    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
++      <span className={`status-dot ${ok ? "ok" : ""}`} />
++      <b style={{ minWidth: 320 }}>{label}</b>
++      <span className="muted">{ok ? "ativo" : "não configurado"} · {note}</span>
++    </div>
++  );
++}
+diff --git a/apps/web/app/video/page.tsx b/apps/web/app/video/page.tsx
+index 6b7ca3e..1d9299a 100644
+--- a/apps/web/app/video/page.tsx
++++ b/apps/web/app/video/page.tsx
+@@ -1,51 +1,74 @@
+ "use client";
+ 
+ import { useSearchParams } from "next/navigation";
+-import { Suspense, useEffect, useState } from "react";
++import { Suspense, useEffect, useMemo, useState } from "react";
+ import { ApiError, api, usd, type Job } from "@/lib/api";
+-import { History, ModelCard, ReferencePicker, type ModelOption } from "@/components/create";
++import { estimateVideoUsd, toOption, useModels, type CatalogModel, type Res } from "@/lib/models";
++import { History, ModelCard, ReferencePicker } from "@/components/create";
+ import { useConfirm, useToast } from "@/components/Toasts";
+ 
+-const MODELS: ModelOption[] = [
+-  { id: "seedance-1-0-pro-250528", name: "Seedance 1.0 pro", provider: "byteplus", badges: [{ text: "TOP", tone: "top" }, { text: "1080p" }, { text: "até 10s" }, { text: "2M tokens grátis", tone: "free" }], note: "texto→vídeo e imagem→vídeo" },
+-  { id: "seedance-1-0-pro-fast-251015", name: "Seedance 1.0 pro fast", provider: "byteplus", badges: [{ text: "1080p" }, { text: "até 10s" }, { text: "2,5× mais barato", tone: "free" }], note: "só imagem→vídeo (precisa do primeiro frame)" },
+-  { id: "dreamina-seedance-2-5-260628", name: "Seedance 2.5", provider: "byteplus", badges: [{ text: "1080p" }, { text: "até 30s" }, { text: "áudio nativo" }, { text: "US$ 30 reserva", tone: "locked" }], note: "o motor do Cinema Studio do Higgsfield — exige fundo de reserva pago no console" },
+-  { id: "kling-4", name: "Kling 4.0", provider: "fal", badges: [{ text: "1080p" }, { text: "3–30s" }, { text: "áudio nativo" }, { text: "US$ 0,24/s", tone: "locked" }], note: "via fal.ai — precisa de FAL_KEY; paga por uso" },
+-  { id: "veo-3-1", name: "Veo 3.1 (Google)", provider: "google", badges: [{ text: "áudio nativo" }, { text: "fase 2", tone: "locked" }], locked: "fase 2 — Google AI Studio (pago)" },
+-];
+-
+ function VideoCreate() {
+   const params = useSearchParams();
+   const toast = useToast();
+   const ask = useConfirm();
+-  const [model, setModel] = useState(MODELS[0]);
++  const models = useModels("video");
++  const [modelId, setModelId] = useState<string>("seedance-1-0-pro-fast-251015");
++  const model: CatalogModel | undefined = useMemo(() => models.find((m) => m.id === modelId) ?? models[0], [models, modelId]);
+   const [prompt, setPrompt] = useState("");
+   const [frame, setFrame] = useState<string | null>(params.get("frame"));
++  const [endFrame, setEndFrame] = useState<string | null>(null);
++  const [audioRef, setAudioRef] = useState<string | null>(null);
+   const [ratio, setRatio] = useState<"9:16" | "16:9" | "1:1">("9:16");
+-  const [res, setRes] = useState<"480p" | "720p" | "1080p">("480p");
++  const [res, setRes] = useState<Res>("720p");
+   const [dur, setDur] = useState(5);
++  const [audio, setAudio] = useState(false);
+   const [estimate, setEstimate] = useState<number | null>(null);
+   const [busy, setBusy] = useState(false);
+   const [tick, setTick] = useState(0);
+ 
+-  const request = () => ({ kind: "video", model: model.provider === "byteplus" ? model.id : undefined, prompt: prompt || "subtle natural motion, cinematic", firstFrame: frame ?? undefined, ratio, resolution: res, durationSec: dur });
+-  const bodyFor = () => JSON.stringify({ provider: model.provider, request: request() });
++  // ajusta resolução/duração quando troca de modelo
++  useEffect(() => {
++    if (!model) return;
++    if (model.resolutions && !model.resolutions.includes(res)) setRes(model.resolutions.includes("720p") ? "720p" : model.resolutions[model.resolutions.length - 1]);
++    if (model.durations && !model.durations.includes(dur)) setDur(model.durations.includes(5) ? 5 : model.durations[0]);
++    if (!model.nativeAudio) setAudio(false);
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [model?.id]);
++
++  const request = () => ({
++    kind: "video",
++    model: model?.id,
++    prompt: prompt || "subtle natural motion, cinematic",
++    firstFrame: frame ?? undefined,
++    lastFrame: model?.endFrame && endFrame ? endFrame : undefined,
++    audioRef: model?.audioRef && audioRef ? audioRef : undefined,
++    ratio,
++    resolution: res,
++    durationSec: dur,
++    audio: audio || (model?.audioRef && audioRef ? true : undefined),
++  });
++  const bodyFor = () => JSON.stringify({ request: request() });
+ 
+   useEffect(() => {
++    if (!model) return;
++    setEstimate(estimateVideoUsd(model, res, dur, audio));
+     api<{ estimatedCostUsd: number }>("/estimate", { method: "POST", body: bodyFor() })
+       .then((r) => setEstimate(r.estimatedCostUsd))
+-      .catch(() => setEstimate(null));
++      .catch(() => {});
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+-  }, [frame, ratio, res, dur, model]);
++  }, [frame, ratio, res, dur, model?.id, audio]);
++
++  const paid = model?.provider === "fal" || model?.gate === "reserve";
+ 
+   const generate = async () => {
++    if (!model) return;
+     if (!frame && prompt.trim().length < 3) return toast("Descreva o vídeo ou escolha um primeiro frame", "bad");
++    if (!frame && model.needsFirstFrame) return toast(`${model.name} só anima uma imagem — escolha o primeiro frame`, "bad");
+     setBusy(true);
+     try {
+       const { estimatedCostUsd } = await api<{ estimatedCostUsd: number }>("/estimate", { method: "POST", body: bodyFor() });
+-      const paid = model.provider !== "byteplus" || model.id.startsWith("dreamina");
+-      if (!await ask(`Gerar vídeo ${res} de ${dur}s com ${model.name}${frame ? " (imagem→vídeo)" : ""}?\nCusto estimado ${usd(estimatedCostUsd)} — ${paid ? "COBRADO (fora da cota grátis)" : "sai da cota grátis"}.`)) return;
+-      await api<Job>("/generate", { method: "POST", body: bodyFor() });
++      if (!await ask(`Gerar vídeo ${res} de ${dur}s com ${model.name}${frame ? " (imagem→vídeo)" : ""}${audio ? " com áudio nativo" : ""}?\nCusto ${usd(estimatedCostUsd)} — ${paid ? "COBRADO no cartão (fora da cota grátis)" : "sai da cota grátis (cartão: US$ 0)"}.`, paid ? "Gerar e cobrar" : "Gerar")) return;
++      await api<Job>("/generate", { method: "POST", body: JSON.stringify({ request: request(), allowPaid: paid }) });
+       setTick((t) => t + 1);
+       toast("Vídeo na fila — leva 1 a 3 minutos");
+     } catch (e: any) {
+@@ -68,8 +91,12 @@ function VideoCreate() {
+             Motion control
+           </button>
+         </div>
+-        <ModelCard model={model} options={MODELS} onChange={setModel} />
++        {model && <ModelCard model={toOption(model)} options={models.map(toOption)} onChange={(m) => setModelId(m.id)} />}
++        {model?.locked && <div className="empty" style={{ padding: 10 }}>{model.locked}</div>}
+         <ReferencePicker kind="image" label="Primeiro frame" value={frame} onChange={setFrame} hint="a imagem que vai ganhar movimento" />
++        {model?.endFrame && <ReferencePicker kind="image" label="Último frame (opcional)" value={endFrame} onChange={setEndFrame} hint="mão com objeto: gere a imagem de início e de fim; o modelo faz a transição" />}
++        {model?.audioRef && <ReferencePicker kind="audio" label="Áudio de referência (fala)" value={audioRef} onChange={setAudioRef} accept="audio/*" hint="gere a narração antes: a pessoa fala com a boca sincronizada" />}
++        {model?.tip && <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.4 }}>💡 {model.tip}</div>}
+         <div className="field">
+           <label htmlFor="prompt">Movimento e câmera</label>
+           <textarea id="prompt" className="textarea" rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Ex.: slow push-in, she looks up and smiles, papers flutter, cinematic" />
+@@ -78,7 +105,7 @@ function VideoCreate() {
+           <div className="opt">
+             <label>Duração</label>
+             <select value={dur} onChange={(e) => setDur(+e.target.value)}>
+-              {(model.provider === "byteplus" && !model.id.startsWith("dreamina") ? [3, 4, 5, 6, 8, 10] : [3, 4, 5, 6, 8, 10, 12, 15, 20, 30]).map((n) => (
++              {(model?.durations ?? [3, 4, 5, 6, 8, 10]).map((n) => (
+                 <option key={n} value={n}>
+                   {n} s
+                 </option>
+@@ -95,20 +122,24 @@ function VideoCreate() {
+           </div>
+           <div className="opt">
+             <label>Qualidade</label>
+-            <select value={res} onChange={(e) => setRes(e.target.value as any)}>
+-              {["480p", "720p", "1080p"].map((r) => (
++            <select value={res} onChange={(e) => setRes(e.target.value as Res)}>
++              {(model?.resolutions ?? ["480p", "720p", "1080p"]).map((r) => (
+                 <option key={r}>{r}</option>
+               ))}
+             </select>
+           </div>
+-          <div className="opt" title="Seedance 1.0 gera vídeo mudo; a narração entra na montagem">
+-            <label>Áudio</label>
+-            <input value="na montagem" readOnly />
++          <div className="opt" title={model?.nativeAudio ? "o modelo gera som ambiente/falas junto do vídeo" : "esse modelo gera vídeo mudo; a narração entra na montagem"}>
++            <label>Áudio nativo</label>
++            <select value={audio ? "sim" : "nao"} disabled={!model?.nativeAudio} onChange={(e) => setAudio(e.target.value === "sim")}>
++              <option value="nao">{model?.nativeAudio ? "não (mais barato)" : "na montagem"}</option>
++              {model?.nativeAudio && <option value="sim">sim</option>}
++            </select>
+           </div>
+         </div>
+-        <button className="btn primary gen" disabled={busy || !!model.locked} onClick={generate}>
+-          {busy ? "Enviando…" : "Gerar"} <span className="cost">{estimate != null ? usd(estimate) : ""}</span>
++        <button className="btn primary gen" disabled={busy || !model || !!model.locked} onClick={generate}>
++          {busy ? "Enviando…" : paid ? "Gerar (cobra)" : "Gerar"} <span className="cost">{estimate != null ? usd(estimate) : ""}</span>
+         </button>
++        {model && !paid && <span className="muted" style={{ fontSize: 11 }}>sai da cota grátis da BytePlus · cartão US$ 0</span>}
+       </aside>
+       <History kind="video" refreshKey={tick} />
+     </div>
+diff --git a/apps/web/components/TopNav.tsx b/apps/web/components/TopNav.tsx
+index f329a03..3f7f32e 100644
+--- a/apps/web/components/TopNav.tsx
++++ b/apps/web/components/TopNav.tsx
+@@ -10,11 +10,12 @@ const tools = [
+   { href: "/projects", label: "Quadrinhos", match: /^\/projects/ },
+   { href: "/image", label: "Imagem" },
+   { href: "/video", label: "Vídeo" },
+-  { href: "/audio", label: "Áudio", tag: "novo" },
++  { href: "/audio", label: "Áudio" },
++  { href: "/clone", label: "Clone", tag: "novo" },
+   { href: "/library", label: "Biblioteca" },
++  { href: "/usage", label: "Gastos", tag: "novo" },
+   { href: "#", label: "Shorts", soon: true },
+   { href: "#", label: "Anúncios", soon: true },
+-  { href: "#", label: "Clone", soon: true },
+ ];
+ 
+ export function TopNav() {
+diff --git a/apps/web/lib/models.ts b/apps/web/lib/models.ts
+new file mode 100644
+index 0000000..2799264
+--- /dev/null
++++ b/apps/web/lib/models.ts
+@@ -0,0 +1,56 @@
++"use client";
++
++import { useEffect, useState } from "react";
++import { api } from "./api";
++import type { ModelOption } from "@/components/create";
++
++export type Res = "480p" | "720p" | "1080p";
++export type CatalogModel = {
++  id: string;
++  name: string;
++  provider: "byteplus" | "fal" | "seedaudio" | "elevenlabs";
++  kind: "image" | "video" | "audio" | "avatar" | "upscale" | "lipsync" | "sfx";
++  badges: { text: string; tone?: "top" | "free" | "locked" }[];
++  note?: string;
++  price: { perSec?: Partial<Record<Res, number>>; perImage?: number; perMin?: number; perMp?: number };
++  resolutions?: Res[];
++  durations?: number[];
++  needsFirstFrame?: boolean;
++  nativeAudio?: boolean;
++  gate?: "fal" | "reserve" | "elevenlabs";
++  endFrame?: boolean;
++  audioRef?: boolean;
++  tip?: string;
++  free?: string;
++  locked?: string;
++};
++
++let cache: CatalogModel[] | null = null;
++let inflight: Promise<CatalogModel[]> | null = null;
++
++export function loadModels(): Promise<CatalogModel[]> {
++  if (cache) return Promise.resolve(cache);
++  inflight ??= api<{ models: CatalogModel[] }>("/models").then((r) => (cache = r.models));
++  return inflight;
++}
++
++/** modelos de um tipo, já no formato do ModelCard; travados vêm por último */
++export function useModels(kind: CatalogModel["kind"]) {
++  const [models, setModels] = useState<CatalogModel[]>([]);
++  useEffect(() => {
++    loadModels()
++      .then((all) => setModels(all.filter((m) => m.kind === kind).sort((a, b) => Number(!!a.locked) - Number(!!b.locked))))
++      .catch(() => {});
++  }, [kind]);
++  return models;
++}
++
++export const toOption = (m: CatalogModel): ModelOption => ({ id: m.id, name: m.name, provider: m.provider, badges: m.badges, note: m.note, locked: m.locked });
++
++/** estimativa local (a API confirma antes de gerar) */
++export function estimateVideoUsd(m: CatalogModel | undefined, res: Res, sec: number, audio = false) {
++  if (!m) return 0;
++  let per = m.price.perSec?.[res] ?? m.price.perSec?.["1080p"] ?? 0;
++  if (audio && m.nativeAudio && m.id !== "kling-4.0") per *= m.id === "kling-3.0" ? 1.5 : 2;
++  return +(per * sec).toFixed(3);
++}
+diff --git a/packages/db/migrations/006_more_kinds.sql b/packages/db/migrations/006_more_kinds.sql
+new file mode 100644
+index 0000000..21358fe
+--- /dev/null
++++ b/packages/db/migrations/006_more_kinds.sql
+@@ -0,0 +1,3 @@
++-- novos tipos de job: avatar (clone de pessoa), upscale (estilo Magnific), lipsync, sfx (efeito sonoro)
++alter table jobs drop constraint if exists jobs_kind_check;
++alter table jobs add constraint jobs_kind_check check (kind in ('image','video','audio','render','avatar','upscale','lipsync','sfx'));
+diff --git a/packages/providers/src/byteplus/index.ts b/packages/providers/src/byteplus/index.ts
+index 5555acd..a2a4b05 100644
+--- a/packages/providers/src/byteplus/index.ts
++++ b/packages/providers/src/byteplus/index.ts
+@@ -1,5 +1,7 @@
+ import {
++  type AvatarRequest,
+   type GenerationRequest,
++  type MediaKind,
+   type ImageRequest,
+   type PollResult,
+   type Provider,
+@@ -84,8 +86,8 @@ export class BytePlusProvider implements Provider {
+     this.imageModel = cfg.imageModel ?? "seedream-4-5-251128";
+   }
+ 
+-  supports(kind: "image" | "video" | "audio") {
+-    return kind === "image" || kind === "video";
++  supports(kind: MediaKind) {
++    return kind === "image" || kind === "video" || kind === "avatar";
+   }
+ 
+   private pickVideoModel(req: VideoRequest) {
+@@ -95,6 +97,7 @@ export class BytePlusProvider implements Provider {
+   }
+ 
+   estimateCost(req: GenerationRequest): number {
++    if (req.kind === "avatar") return this.estimateCost(this.avatarToVideo(req));
+     if (req.kind === "image") {
+       return IMAGE_PRICE_USD[priceKeyFor(req.model ?? this.imageModel)] ?? 0.04;
+     }
+@@ -139,9 +142,26 @@ export class BytePlusProvider implements Provider {
+   async submit(req: GenerationRequest): Promise<SubmitResult> {
+     if (req.kind === "image") return this.submitImage(req);
+     if (req.kind === "video") return this.submitVideo(req);
++    // clone de pessoa: foto + narração → Seedance 2.5 anima a fala pela voz real
++    if (req.kind === "avatar") return this.submitVideo(this.avatarToVideo(req));
+     throw new ProviderError(this.name, `não gera ${req.kind}`);
+   }
+ 
++  private avatarToVideo(req: AvatarRequest): VideoRequest {
++    const sec = Math.min(30, Math.max(4, Math.ceil((req.audioSec ?? 10) + 0.5)));
++    return {
++      kind: "video",
++      model: req.model && /seedance-2/.test(req.model) ? req.model : "dreamina-seedance-2-5-260628",
++      prompt: `${req.prompt ?? "A pessoa de @Image1 fala olhando para a câmera, expressiva, gestos naturais."} A fala segue exatamente o áudio @Audio1, com os lábios sincronizados.`,
++      referenceImages: [req.imageUrl],
++      audioRef: req.audioUrl,
++      ratio: "9:16",
++      resolution: req.resolution ?? "720p",
++      durationSec: sec,
++      audio: true,
++    };
++  }
++
+   private async submitVideo(req: VideoRequest): Promise<SubmitResult> {
+     const model = this.pickVideoModel(req);
+     if (RESERVE_FUND_MODELS.test(model) && !this.cfg.allowReserveFund) {
+@@ -167,6 +187,9 @@ export class BytePlusProvider implements Provider {
+     if (req.lastFrame) {
+       content.push({ type: "image_url", image_url: { url: req.lastFrame }, role: "last_frame" });
+     }
++    // Seedance 2.x "omni": imagens de referência (personagem/cenário) e áudio de referência (fala)
++    for (const url of req.referenceImages ?? []) content.push({ type: "image_url", image_url: { url }, role: "reference_image" });
++    if (req.audioRef) content.push({ type: "audio_url", audio_url: { url: req.audioRef }, role: "reference_audio" });
+ 
+     const out = await this.http<{ id: string }>("/contents/generations/tasks", {
+       method: "POST",
+diff --git a/packages/providers/src/catalog.ts b/packages/providers/src/catalog.ts
+new file mode 100644
+index 0000000..a39b2ec
+--- /dev/null
++++ b/packages/providers/src/catalog.ts
+@@ -0,0 +1,391 @@
++/**
++ * Catálogo único de modelos do G2 Studio.
++ * A API usa pra escolher o provedor/estimar custo; a web usa pra montar os seletores.
++ * Preços em USD (nov/2026) — conferidos nas páginas oficiais (fal.ai / BytePlus).
++ */
++
++export type CatalogKind = "image" | "video" | "audio" | "avatar" | "upscale" | "lipsync" | "sfx";
++export type ProviderName = "byteplus" | "fal" | "seedaudio" | "elevenlabs";
++export type Res = "480p" | "720p" | "1080p";
++
++export interface CatalogModel {
++  /** id usado em request.model */
++  id: string;
++  name: string;
++  provider: ProviderName;
++  kind: CatalogKind;
++  badges: { text: string; tone?: "top" | "free" | "locked" }[];
++  note?: string;
++  /** preço: vídeo/avatar por segundo (por resolução), imagem por unidade, áudio por minuto, upscale por megapixel */
++  price: { perSec?: Partial<Record<Res, number>>; perImage?: number; perMin?: number; perMp?: number };
++  resolutions?: Res[];
++  /** durações permitidas (s) */
++  durations?: number[];
++  /** precisa de primeiro frame (só imagem→vídeo) */
++  needsFirstFrame?: boolean;
++  /** gera áudio nativo junto do vídeo */
++  nativeAudio?: boolean;
++  /** o que trava o modelo: chave paga (fal), fundo de reserva (BytePlus) */
++  gate?: "fal" | "reserve" | "elevenlabs";
++  /** aceita último frame (quadro inicial + final — mão com objeto) */
++  endFrame?: boolean;
++  /** aceita áudio de referência pra pessoa falar com a boca certa */
++  audioRef?: boolean;
++  /** dica do nosso guia (PDF "Modelos que usamos no Higgsfield") */
++  tip?: string;
++  /** endpoints na fal (imagem→vídeo / texto→vídeo / único) */
++  fal?: { i2v?: string; t2v?: string; endpoint?: string; family: "kling" | "kling4" | "nano" | "gpt" | "clarity" | "kling-avatar" | "omnihuman" | "grok" | "synclip" };
++  /** cota grátis conhecida (texto informativo) */
++  free?: string;
++}
++
++export const CATALOG: CatalogModel[] = [
++  // ───────── vídeo — BytePlus ModelArk (cota grátis, modo "só crédito grátis") ─────────
++  {
++    id: "seedance-1-0-pro-fast-251015",
++    name: "Seedance 1.0 fast",
++    provider: "byteplus",
++    kind: "video",
++    badges: [{ text: "TOP custo", tone: "top" }, { text: "até 1080p" }, { text: "até 10 s" }, { text: "2M tokens grátis", tone: "free" }],
++    note: "só imagem→vídeo · o mais barato que existe · ~US$ 0,24 por 5 s em 1080p",
++    tip: "serve pra planos simples (andar, olhar, câmera chegando no rosto). Ação encadeada, luz específica ou fala: Seedance 2.5",
++    price: { perSec: { "480p": 0.0107, "720p": 0.0216, "1080p": 0.0486 } },
++    resolutions: ["480p", "720p", "1080p"],
++    durations: [3, 4, 5, 6, 8, 10],
++    needsFirstFrame: true,
++    free: "2M tokens",
++  },
++  {
++    id: "seedance-1-0-pro-250528",
++    name: "Seedance 1.0 pro",
++    provider: "byteplus",
++    kind: "video",
++    badges: [{ text: "1080p" }, { text: "texto→vídeo" }, { text: "2M tokens grátis", tone: "free" }],
++    note: "texto→vídeo e imagem→vídeo · ~US$ 0,61 por 5 s em 1080p",
++    price: { perSec: { "480p": 0.0267, "720p": 0.054, "1080p": 0.1215 } },
++    resolutions: ["480p", "720p", "1080p"],
++    durations: [3, 4, 5, 6, 8, 10],
++    free: "2M tokens",
++  },
++  {
++    id: "dreamina-seedance-2-5-260628",
++    name: "Seedance 2.5",
++    provider: "byteplus",
++    kind: "video",
++    badges: [{ text: "cinema", tone: "top" }, { text: "1080p" }, { text: "até 30 s" }, { text: "áudio nativo" }, { text: "US$ 30 reserva", tone: "locked" }],
++    note: "o único que entregou fala com boca sincronizada · aceita áudio de referência · ~US$ 2,84 por 5 s em 1080p (Higgsfield: US$ 3,92)",
++    tip: "gere a narração antes e passe como áudio de referência: a pessoa fala com a boca certa. Use nos momentos-chave; planos de passagem no 1.0 fast",
++    price: { perSec: { "480p": 0.126, "720p": 0.253, "1080p": 0.569 } },
++    resolutions: ["480p", "720p", "1080p"],
++    durations: [4, 5, 6, 8, 10, 12, 15, 20, 30],
++    nativeAudio: true,
++    endFrame: true,
++    audioRef: true,
++    gate: "reserve",
++  },
++  {
++    id: "dreamina-seedance-2-0-mini-260615",
++    name: "Seedance 2.0 mini",
++    provider: "byteplus",
++    kind: "video",
++    badges: [{ text: "720p" }, { text: "4–15 s" }, { text: "áudio nativo" }, { text: "US$ 30 reserva", tone: "locked" }],
++    note: "barato pra diálogo animado · ~US$ 0,38 por 5 s em 720p · (boca saiu fora de sincronia no nosso teste)",
++    price: { perSec: { "480p": 0.034, "720p": 0.0756 } },
++    resolutions: ["480p", "720p"],
++    durations: [4, 5, 6, 8, 10, 12, 15],
++    nativeAudio: true,
++    gate: "reserve",
++  },
++  {
++    id: "dreamina-seedance-2-0-fast-260128",
++    name: "Seedance 2.0 fast",
++    provider: "byteplus",
++    kind: "video",
++    badges: [{ text: "1080p" }, { text: "4–15 s" }, { text: "áudio nativo" }, { text: "US$ 30 reserva", tone: "locked" }],
++    note: "meio-termo entre o 2.0 mini e o 2.5 · ~US$ 1,36 por 5 s em 1080p",
++    price: { perSec: { "480p": 0.054, "720p": 0.121, "1080p": 0.272 } },
++    resolutions: ["480p", "720p", "1080p"],
++    durations: [4, 5, 6, 8, 10, 12, 15],
++    nativeAudio: true,
++    gate: "reserve",
++  },
++
++  // ───────── vídeo — Kling via fal.ai (pré-pago, mínimo US$ 10) ─────────
++  {
++    id: "kling-2.5-turbo",
++    name: "Kling 2.5 turbo pro",
++    provider: "fal",
++    kind: "video",
++    badges: [{ text: "melhor custo", tone: "top" }, { text: "1080p" }, { text: "5–10 s" }, { text: "US$ 0,35 / 5 s", tone: "locked" }],
++    note: "qualidade Kling por US$ 0,07/s · sem áudio (a narração entra na montagem)",
++    price: { perSec: { "720p": 0.07, "1080p": 0.07 } },
++    resolutions: ["1080p"],
++    durations: [5, 10],
++    gate: "fal",
++    fal: { family: "kling", i2v: "fal-ai/kling-video/v2.5-turbo/pro/image-to-video", t2v: "fal-ai/kling-video/v2.5-turbo/pro/text-to-video" },
++  },
++  {
++    id: "kling-2.6",
++    name: "Kling 2.6 pro",
++    provider: "fal",
++    kind: "video",
++    badges: [{ text: "1080p" }, { text: "5–10 s" }, { text: "áudio nativo" }, { text: "US$ 0,35–0,70 / 5 s", tone: "locked" }],
++    note: "US$ 0,07/s mudo · US$ 0,14/s com áudio nativo",
++    price: { perSec: { "720p": 0.07, "1080p": 0.07 } },
++    resolutions: ["1080p"],
++    durations: [5, 10],
++    nativeAudio: true,
++    gate: "fal",
++    fal: { family: "kling", i2v: "fal-ai/kling-video/v2.6/pro/image-to-video", t2v: "fal-ai/kling-video/v2.6/pro/text-to-video" },
++  },
++  {
++    id: "kling-3.0-turbo",
++    name: "Kling 3.0 turbo pro",
++    provider: "fal",
++    kind: "video",
++    badges: [{ text: "1080p" }, { text: "3–15 s" }, { text: "US$ 0,70 / 5 s", tone: "locked" }],
++    note: "US$ 0,14/s · rápido",
++    price: { perSec: { "720p": 0.14, "1080p": 0.14 } },
++    resolutions: ["1080p"],
++    durations: [3, 4, 5, 6, 8, 10, 12, 15],
++    needsFirstFrame: true,
++    gate: "fal",
++    fal: { family: "kling", i2v: "fal-ai/kling-video/v3/turbo/pro/image-to-video" },
++  },
++  {
++    id: "kling-3.0",
++    name: "Kling 3.0 pro",
++    provider: "fal",
++    kind: "video",
++    badges: [{ text: "1080p" }, { text: "3–15 s" }, { text: "áudio nativo" }, { text: "US$ 0,56–0,84 / 5 s", tone: "locked" }],
++    note: "o padrão das animações sem fala · US$ 0,112/s mudo · US$ 0,168/s com áudio · quadro inicial + final",
++    tip: "mão com objeto (pegar, soltar, abrir): gere a imagem de início e de fim e use os dois quadros, com a mão de perfil. Nenhum plano acima de ~3 s",
++    price: { perSec: { "720p": 0.112, "1080p": 0.112 } },
++    resolutions: ["1080p"],
++    durations: [3, 4, 5, 6, 8, 10, 12, 15],
++    nativeAudio: true,
++    endFrame: true,
++    gate: "fal",
++    fal: { family: "kling", i2v: "fal-ai/kling-video/v3/pro/image-to-video", t2v: "fal-ai/kling-video/v3/pro/text-to-video" },
++  },
++  {
++    id: "kling-4.0",
++    name: "Kling 4.0",
++    provider: "fal",
++    kind: "video",
++    badges: [{ text: "1080p" }, { text: "3–30 s" }, { text: "áudio nativo" }, { text: "US$ 1,18 / 5 s", tone: "locked" }],
++    note: "US$ 0,157/s em 720p · US$ 0,235/s em 1080p · (no Higgsfield está em promoção: ~US$ 0,80 / 5 s)",
++    price: { perSec: { "720p": 0.157, "1080p": 0.235 } },
++    resolutions: ["720p", "1080p"],
++    durations: [3, 4, 5, 6, 8, 10, 12, 15, 20, 30],
++    nativeAudio: true,
++    gate: "fal",
++    fal: { family: "kling4", i2v: "kling/v4/image-to-video", t2v: "kling/v4/text-to-video" },
++  },
++
++  {
++    id: "grok-imagine-1.5",
++    name: "Grok Imagine 1.5 (xAI)",
++    provider: "fal",
++    kind: "video",
++    badges: [{ text: "o mais barato" }, { text: "1–15 s" }, { text: "US$ 0,40 / 5 s", tone: "locked" }],
++    note: "US$ 0,08/s em 480p · 0,14/s em 720p · 0,25/s em 1080p · nunca testamos em 3D",
++    price: { perSec: { "480p": 0.08, "720p": 0.14, "1080p": 0.25 } },
++    resolutions: ["480p", "720p", "1080p"],
++    durations: [1, 2, 3, 4, 5, 6, 8, 10, 12, 15],
++    needsFirstFrame: true,
++    gate: "fal",
++    fal: { family: "grok", i2v: "xai/grok-imagine-video/v1.5/image-to-video" },
++  },
++
++  // ───────── imagem ─────────
++  {
++    id: "seedream-4-5-251128",
++    name: "Seedream 4.5",
++    provider: "byteplus",
++    kind: "image",
++    badges: [{ text: "TOP", tone: "top" }, { text: "2K" }, { text: "200 grátis", tone: "free" }],
++    note: "texto→imagem e imagem→imagem, 2K, texto legível · US$ 0,04",
++    price: { perImage: 0.04 },
++    free: "200 imagens",
++  },
++  {
++    id: "seedream-4-0-250828",
++    name: "Seedream 4.0",
++    provider: "byteplus",
++    kind: "image",
++    badges: [{ text: "2K" }, { text: "200 grátis", tone: "free" }],
++    note: "mais barato, ótimo pra storyboard · US$ 0,03",
++    price: { perImage: 0.03 },
++    free: "200 imagens",
++  },
++  {
++    id: "gpt-image-2.5-sunburst",
++    name: "GPT Image 2.5 Sunburst",
++    provider: "fal",
++    kind: "image",
++    badges: [{ text: "3D / animação", tone: "top" }, { text: "2K" }, { text: "US$ 0,04–0,08", tone: "locked" }],
++    note: "o principal pra 3D: fichas de personagem e cenas das novelas · (a variante Flare sai fotográfica: evitar no 3D)",
++    tip: "sempre passe a ficha do personagem como referência. Sem ela, sai outra pessoa",
++    price: { perImage: 0.06 },
++    gate: "fal",
++    fal: { family: "gpt", endpoint: "openai/gpt-image-2.5/sunburst/text-to-image", i2v: "openai/gpt-image-2.5/sunburst/edit" },
++  },
++  {
++    id: "gpt-image-2.6-flare",
++    name: "GPT Image 2.6 Flare (foto real)",
++    provider: "fal",
++    kind: "image",
++    badges: [{ text: "realista", tone: "top" }, { text: "até 4K" }, { text: "US$ 0,04–0,06", tone: "locked" }],
++    note: "fotos realistas (reacts, anúncios realistas) · fica muito real",
++    tip: "qualidade média basta quando o vídeo final for 720p",
++    price: { perImage: 0.055 },
++    gate: "fal",
++    fal: { family: "gpt", endpoint: "openai/gpt-image-2.6/flare/text-to-image", i2v: "openai/gpt-image-2.6/flare/edit" },
++  },
++  {
++    id: "gpt-image-2.6-sunburst",
++    name: "GPT Image 2.6 Sunburst",
++    provider: "fal",
++    kind: "image",
++    badges: [{ text: "ilustração" }, { text: "até 4K" }, { text: "US$ 0,04–0,06", tone: "locked" }],
++    note: "versão 2.6 da variante Sunburst (mais ilustrada)",
++    price: { perImage: 0.055 },
++    gate: "fal",
++    fal: { family: "gpt", endpoint: "openai/gpt-image-2.6/sunburst/text-to-image", i2v: "openai/gpt-image-2.6/sunburst/edit" },
++  },
++  {
++    id: "nano-banana-2.1",
++    name: "Nano Banana 2.1 (Google)",
++    provider: "fal",
++    kind: "image",
++    badges: [{ text: "rosto fiel", tone: "top" }, { text: "até 14 referências" }, { text: "até 4K" }, { text: "US$ 0,04–0,06", tone: "locked" }],
++    note: "rosto de pessoa real com fotos de referência (faz o papel do Soul ID) · o rosto que ficou mais fiel nos 30 hooks",
++    tip: "mande 3–10 fotos limpas da pessoa como referência; o modelo mantém até 4 personagens consistentes",
++    price: { perImage: 0.06 },
++    gate: "fal",
++    fal: { family: "nano", endpoint: "google/nano-banana-2.1", i2v: "google/nano-banana-2.1/edit" },
++  },
++  {
++    id: "nano-banana-pro",
++    name: "Nano Banana Pro (Google)",
++    provider: "fal",
++    kind: "image",
++    badges: [{ text: "realismo", tone: "top" }, { text: "até 4K" }, { text: "edita com referência" }, { text: "US$ 0,15", tone: "locked" }],
++    note: "o melhor em pessoas reais e texto na imagem · US$ 0,15 (4K: 0,30) · via fal.ai",
++    price: { perImage: 0.15 },
++    gate: "fal",
++    fal: { family: "nano", endpoint: "fal-ai/nano-banana-pro", i2v: "fal-ai/nano-banana-pro/edit" },
++  },
++  {
++    id: "gpt-image-1.5",
++    name: "GPT Image 1.5 (antigo)",
++    provider: "fal",
++    kind: "image",
++    badges: [{ text: "ilustração" }, { text: "US$ 0,05–0,20", tone: "locked" }],
++    note: "ótimo em estilo ilustrado/quadrinhos · US$ 0,05 (médio) · US$ 0,20 (alto) · via fal.ai",
++    price: { perImage: 0.2 },
++    gate: "fal",
++    fal: { family: "gpt", endpoint: "fal-ai/gpt-image-1.5", i2v: "fal-ai/gpt-image-1.5/edit" },
++  },
++
++  // ───────── upscale / estilo Magnific ─────────
++  {
++    id: "clarity-upscaler",
++    name: "Upscale criativo (estilo Magnific)",
++    provider: "fal",
++    kind: "upscale",
++    badges: [{ text: "2–4×" }, { text: "detalhe/realismo" }, { text: "US$ 0,03 / MP", tone: "locked" }],
++    note: "aumenta resolução e inventa detalhe (pele, tecido, textura) como o Magnific · ~US$ 0,25 por imagem 2K→4K",
++    price: { perMp: 0.03 },
++    gate: "fal",
++    fal: { family: "clarity", endpoint: "fal-ai/clarity-upscaler" },
++  },
++
++  // ───────── avatar / clone de pessoa (foto + voz → vídeo falando) ─────────
++  {
++    id: "omnihuman-1.5",
++    name: "OmniHuman 1.5 (ByteDance)",
++    provider: "fal",
++    kind: "avatar",
++    badges: [{ text: "TOP", tone: "top" }, { text: "1080p" }, { text: "até 30 s" }, { text: "US$ 0,16 / s", tone: "locked" }],
++    note: "foto + áudio → pessoa falando com gestos e emoção · 720p até 60 s · via fal.ai",
++    price: { perSec: { "720p": 0.16, "1080p": 0.16 } },
++    resolutions: ["720p", "1080p"],
++    gate: "fal",
++    fal: { family: "omnihuman", endpoint: "fal-ai/bytedance/omnihuman/v1.5" },
++  },
++  {
++    id: "kling-avatar-2",
++    name: "Kling AI Avatar 2 pro",
++    provider: "fal",
++    kind: "avatar",
++    badges: [{ text: "lip-sync" }, { text: "US$ 0,115 / s", tone: "locked" }],
++    note: "foto + áudio → rosto falando (lip-sync) · via fal.ai",
++    price: { perSec: { "720p": 0.115, "1080p": 0.115 } },
++    resolutions: ["1080p"],
++    gate: "fal",
++    fal: { family: "kling-avatar", endpoint: "fal-ai/kling-video/ai-avatar/v2/pro" },
++  },
++
++  // ───────── lip-sync em vídeo pronto (plano B da boca) ─────────
++  {
++    id: "sync-lipsync-2",
++    name: "Sync Lipsync 2 / 2-pro",
++    provider: "fal",
++    kind: "lipsync",
++    badges: [{ text: "arruma a boca" }, { text: "US$ 3 / min", tone: "locked" }],
++    note: "vídeo pronto + áudio → boca sincronizada · lipsync-2-pro custa 1,67× · via fal.ai",
++    price: { perMin: 3 },
++    gate: "fal",
++    fal: { family: "synclip", endpoint: "fal-ai/sync-lipsync/v2" },
++  },
++
++  // ───────── voz ─────────
++  {
++    id: "seed-audio-1.0",
++    name: "Seed Audio 1.0",
++    provider: "seedaudio",
++    kind: "audio",
++    badges: [{ text: "TOP", tone: "top" }, { text: "pt-BR" }, { text: "clona voz" }, { text: "60 min grátis", tone: "free" }],
++    note: "o mesmo motor de voz do Higgsfield · depois do grátis US$ 0,15/min",
++    price: { perMin: 0.15 },
++    free: "60 min",
++  },
++  {
++    id: "elevenlabs-v4",
++    name: "ElevenLabs v4",
++    provider: "elevenlabs",
++    kind: "audio",
++    badges: [{ text: "narrador padrão da G2", tone: "top" }, { text: "clona voz" }, { text: "US$ 5/mês", tone: "locked" }],
++    note: "a voz de todas as narrações no Higgsfield · estabilidade 0,8 / semelhança 0,9 · ~US$ 0,30 por 1k caracteres",
++    tip: "números por extenso e acento pra forçar pronúncia (“vótos”, “manicúri”); palavra parecida com inglês no início da frase sai com sotaque — emende na frase anterior. Nunca misture dois narradores no mesmo vídeo",
++    price: { perMin: 0.45 },
++    gate: "elevenlabs",
++  },
++  {
++    id: "elevenlabs-sfx",
++    name: "Efeito sonoro (ElevenLabs)",
++    provider: "elevenlabs",
++    kind: "sfx",
++    badges: [{ text: "foley" }, { text: "US$ 0,05", tone: "locked" }],
++    note: "efeito sonoro de uma ação específica (o papel do Mirelo) · meça o volume antes de usar",
++    price: { perImage: 0.05 },
++    gate: "elevenlabs",
++  },
++];
++
++export const findModel = (id?: string | null) => (id ? CATALOG.find((m) => m.id === id || id.startsWith(m.id + ":")) : undefined);
++
++/** disponibilidade por ambiente: o que está travado e por quê */
++export function catalogWithAvailability(env: NodeJS.ProcessEnv = process.env) {
++  return CATALOG.map((m) => {
++    let locked: string | undefined;
++    if (m.gate === "fal" && !env.FAL_KEY) locked = "precisa de conta fal.ai (pré-pago, mínimo US$ 10) → FAL_KEY no .env";
++    if (m.gate === "reserve" && env.ARK_ALLOW_SEEDANCE_2 !== "true") locked = "exige fundo de reserva de US$ 30 na BytePlus → ARK_ALLOW_SEEDANCE_2=true";
++    if (m.gate === "elevenlabs" && !env.ELEVENLABS_API_KEY) locked = "precisa de conta ElevenLabs (Starter US$ 5/mês libera clonagem) → ELEVENLABS_API_KEY no .env";
++    if (m.provider === "byteplus" && !env.ARK_API_KEY) locked = "precisa de ARK_API_KEY";
++    if (m.provider === "seedaudio" && !(env.SEED_SPEECH_API_KEY || env.ARK_API_KEY)) locked = "precisa de SEED_SPEECH_API_KEY";
++    return { ...m, locked };
++  });
++}
+diff --git a/packages/providers/src/elevenlabs/index.ts b/packages/providers/src/elevenlabs/index.ts
+new file mode 100644
+index 0000000..5f42a36
+--- /dev/null
++++ b/packages/providers/src/elevenlabs/index.ts
+@@ -0,0 +1,177 @@
++import { createHash } from "node:crypto";
++import { type AudioRequest, type GenerationRequest, type MediaKind, type PollResult, type Provider, type SfxRequest, type SubmitResult, ProviderError } from "../types.js";
++
++/**
++ * ElevenLabs — o narrador padrão da G2 no Higgsfield (v4), clonagem instantânea de voz
++ * e efeitos sonoros (o papel do Mirelo).
++ * Docs: https://elevenlabs.io/docs/api-reference
++ * Conta própria (ELEVENLABS_API_KEY). Plano Starter (US$ 5/mês) libera Instant Voice Cloning.
++ * Preço aproximado: ~US$ 0,30 por 1k caracteres (varia por plano); SFX ~US$ 0,05 por efeito.
++ */
++
++export interface ElevenLabsConfig {
++  apiKey: string;
++  /** id do modelo TTS (ex.: eleven_v3 / eleven_multilingual_v2) */
++  model?: string;
++  /** voz padrão quando não há referência */
++  defaultVoiceId?: string;
++}
++
++type Alignment = { characters: string[]; character_start_times_seconds: number[]; character_end_times_seconds: number[] };
++
++const BASE = "https://api.elevenlabs.io/v1";
++
++export class ElevenLabsProvider implements Provider {
++  readonly name = "elevenlabs";
++  private results = new Map<string, PollResult>();
++  /** hash do áudio de referência → voice_id clonado (evita clonar de novo a cada narração) */
++  private clones = new Map<string, string>();
++
++  constructor(private cfg: ElevenLabsConfig) {
++    if (!cfg.apiKey) throw new ProviderError(this.name, "ELEVENLABS_API_KEY ausente");
++  }
++
++  supports(kind: MediaKind) {
++    return kind === "audio" || kind === "sfx";
++  }
++
++  estimateCost(req: GenerationRequest): number {
++    if (req.kind === "audio") return +((req.text.length / 1000) * 0.3).toFixed(4);
++    if (req.kind === "sfx") return 0.05;
++    return 0;
++  }
++
++  private headers(extra: Record<string, string> = {}) {
++    return { "xi-api-key": this.cfg.apiKey, ...extra };
++  }
++
++  private async fail(res: Response, what: string): Promise<never> {
++    const text = await res.text();
++    let msg = text.slice(0, 300);
++    try {
++      const j = JSON.parse(text);
++      msg = j.detail?.message ?? j.detail?.status ?? j.detail ?? msg;
++    } catch {
++      /* texto */
++    }
++    throw new ProviderError(this.name, `${what}: ${res.status} ${typeof msg === "string" ? msg : JSON.stringify(msg)}`, res.status);
++  }
++
++  /** Instant Voice Cloning a partir de um áudio (URL pública ou data URL) */
++  private async cloneVoice(ref: { audioUrl?: string; audioData?: string }, name: string): Promise<string> {
++    const src = ref.audioData ?? ref.audioUrl!;
++    const key = createHash("sha1").update(src.slice(0, 4000) + src.length).digest("hex");
++    const cached = this.clones.get(key);
++    if (cached) return cached;
++    let bytes: Uint8Array;
++    let mime = "audio/mpeg";
++    if (src.startsWith("data:")) {
++      const m = /^data:([^;]+);base64,(.*)$/s.exec(src);
++      if (!m) throw new ProviderError(this.name, "áudio de referência inválido");
++      mime = m[1];
++      bytes = Uint8Array.from(Buffer.from(m[2], "base64"));
++    } else {
++      const r = await fetch(src);
++      if (!r.ok) throw new ProviderError(this.name, `não baixei o áudio de referência (${r.status})`);
++      mime = r.headers.get("content-type") ?? mime;
++      bytes = new Uint8Array(await r.arrayBuffer());
++    }
++    const form = new FormData();
++    form.append("name", name.slice(0, 60));
++    form.append("remove_background_noise", "true");
++    form.append("files", new Blob([bytes as BlobPart], { type: mime }), `ref.${mime.includes("wav") ? "wav" : "mp3"}`);
++    const res = await fetch(`${BASE}/voices/add`, { method: "POST", headers: this.headers(), body: form });
++    if (!res.ok) await this.fail(res, "clonar voz");
++    const out = (await res.json()) as { voice_id: string };
++    this.clones.set(key, out.voice_id);
++    return out.voice_id;
++  }
++
++  private async tts(req: AudioRequest): Promise<PollResult> {
++    let voiceId = req.voiceRef?.speaker ?? this.cfg.defaultVoiceId ?? "JBFqnCBsd6RMkjVDRZzb"; // "George" — narrador neutro
++    if (req.voiceRef?.audioUrl || req.voiceRef?.audioData) voiceId = await this.cloneVoice(req.voiceRef, `g2-${Date.now()}`);
++
++    // dicas do nosso guia: estabilidade 0,8 e semelhança 0,9 evitam sotaque estrangeiro
++    const body = {
++      text: req.text,
++      model_id: this.cfg.model ?? "eleven_v3",
++      language_code: (req.language ?? "pt").slice(0, 2),
++      voice_settings: { stability: 0.8, similarity_boost: 0.9, style: 0.2, use_speaker_boost: true, speed: 1 + (req.speechRate ?? 0) / 200 },
++    };
++    const res = await fetch(`${BASE}/text-to-speech/${voiceId}/with-timestamps?output_format=mp3_44100_128`, {
++      method: "POST",
++      headers: this.headers({ "Content-Type": "application/json" }),
++      body: JSON.stringify(body),
++    });
++    if (!res.ok) await this.fail(res, "narração");
++    const out = (await res.json()) as { audio_base64: string; alignment?: Alignment; normalized_alignment?: Alignment };
++    const bytes = Uint8Array.from(Buffer.from(out.audio_base64, "base64"));
++    const subtitle = toSubtitle(req.text, out.alignment ?? out.normalized_alignment);
++    const seconds = subtitle?.sentences.at(-1)?.end_time ? subtitle.sentences.at(-1)!.end_time / 1000 : req.text.length / 15;
++    return { status: "succeeded", outputBytes: bytes, contentType: "audio/mpeg", usage: { seconds: +seconds.toFixed(2), characters: req.text.length }, meta: { subtitle, voiceId } };
++  }
++
++  private async sfx(req: SfxRequest): Promise<PollResult> {
++    const res = await fetch(`${BASE}/sound-generation`, {
++      method: "POST",
++      headers: this.headers({ "Content-Type": "application/json" }),
++      body: JSON.stringify({ text: req.prompt, duration_seconds: Math.min(22, Math.max(0.5, req.durationSec ?? 5)), prompt_influence: 0.4 }),
++    });
++    if (!res.ok) await this.fail(res, "efeito sonoro");
++    const bytes = new Uint8Array(await res.arrayBuffer());
++    return { status: "succeeded", outputBytes: bytes, contentType: "audio/mpeg", usage: { seconds: req.durationSec ?? 5 } };
++  }
++
++  async submit(req: GenerationRequest): Promise<SubmitResult> {
++    const id = `el:${createHash("sha1").update(JSON.stringify(req) + Date.now()).digest("hex").slice(0, 16)}`;
++    const r = req.kind === "audio" ? await this.tts(req) : req.kind === "sfx" ? await this.sfx(req) : null;
++    if (!r) throw new ProviderError(this.name, `não gera ${req.kind}`);
++    this.results.set(id, r);
++    return { providerJobId: id, estimatedCostUsd: this.estimateCost(req) };
++  }
++
++  async poll(providerJobId: string): Promise<PollResult> {
++    const r = this.results.get(providerJobId);
++    if (!r) return { status: "failed", error: "job elevenlabs desconhecido (processo reiniciou?)" };
++    this.results.delete(providerJobId);
++    return r;
++  }
++
++  async download(url: string) {
++    const res = await fetch(url);
++    if (!res.ok) throw new ProviderError(this.name, `download ${res.status}`);
++    return new Uint8Array(await res.arrayBuffer());
++  }
++}
++
++/** alinhamento por caractere → frases e palavras com start/end em ms (mesmo formato do Seed Audio) */
++function toSubtitle(text: string, a?: Alignment) {
++  if (!a?.characters?.length) return null;
++  type W = { text: string; start_time: number; end_time: number };
++  const words: W[] = [];
++  let cur = "";
++  let start = 0;
++  for (let i = 0; i < a.characters.length; i++) {
++    const ch = a.characters[i];
++    if (/\s/.test(ch)) {
++      if (cur) words.push({ text: cur, start_time: Math.round(start * 1000), end_time: Math.round(a.character_end_times_seconds[i - 1] * 1000) });
++      cur = "";
++    } else {
++      if (!cur) start = a.character_start_times_seconds[i];
++      cur += ch;
++    }
++  }
++  if (cur) words.push({ text: cur, start_time: Math.round(start * 1000), end_time: Math.round(a.character_end_times_seconds.at(-1)! * 1000) });
++  // frases: quebra em pontuação final
++  const sentences: { text: string; start_time: number; end_time: number; words: W[] }[] = [];
++  let bucket: W[] = [];
++  for (const w of words) {
++    bucket.push(w);
++    if (/[.!?…]$/.test(w.text)) {
++      sentences.push({ text: bucket.map((x) => x.text).join(" "), start_time: bucket[0].start_time, end_time: w.end_time, words: bucket });
++      bucket = [];
++    }
++  }
++  if (bucket.length) sentences.push({ text: bucket.map((x) => x.text).join(" "), start_time: bucket[0].start_time, end_time: bucket.at(-1)!.end_time, words: bucket });
++  return { text, sentences };
++}
+diff --git a/packages/providers/src/fal/index.ts b/packages/providers/src/fal/index.ts
+index c958fec..dd6a527 100644
+--- a/packages/providers/src/fal/index.ts
++++ b/packages/providers/src/fal/index.ts
+@@ -1,47 +1,70 @@
+-import { type GenerationRequest, type PollResult, type Provider, type SubmitResult, type VideoRequest, ProviderError } from "../types.js";
++import { CATALOG, findModel, type CatalogModel } from "../catalog.js";
++import { type GenerationRequest, type PollResult, type Provider, type SubmitResult, ProviderError } from "../types.js";
+ 
+ /**
+- * fal.ai — Kling 4.0 (o motor do "Genjutsu"/Motion Control do Higgsfield).
++ * fal.ai — um provedor pra vários modelos: Kling (2.5 turbo / 2.6 / 3.0 / 3.0 turbo / 4.0),
++ * Nano Banana Pro, GPT Image 1.5, upscale (Clarity, estilo Magnific), avatar (OmniHuman 1.5, Kling Avatar).
+  * Fila REST: POST https://queue.fal.run/{endpoint} → { request_id, status_url, response_url }
+- * Docs: https://fal.ai/models/kling/v4/image-to-video/api
+- *
+- * Preço (nov/2026): 1080p US$ 0,235/s · 720p US$ 0,157/s — áudio nativo incluso.
+- * Precisa de conta fal.ai com cartão; paga por uso, sem mínimo.
++ * Conta pré-paga (mínimo US$ 10); paga por uso. Precisa de FAL_KEY.
+  */
+ 
+ export interface FalConfig {
+   apiKey: string;
+-  /** endpoint para imagem→vídeo */
+-  i2vEndpoint?: string;
+-  /** endpoint para texto→vídeo */
+-  t2vEndpoint?: string;
+ }
+ 
+-const PRICE_PER_SEC: Record<string, number> = { "720p": 0.157, "1080p": 0.235 };
++type FalStatus = { status: "IN_QUEUE" | "IN_PROGRESS" | "COMPLETED"; response_url?: string; queue_position?: number };
+ 
+-type FalStatus = { status: "IN_QUEUE" | "IN_PROGRESS" | "COMPLETED"; response_url?: string; queue_position?: number; logs?: { message: string }[] };
++const DEFAULTS: Record<string, string> = {
++  video: "kling-2.5-turbo",
++  image: "nano-banana-2.1",
++  upscale: "clarity-upscaler",
++  avatar: "omnihuman-1.5",
++  lipsync: "sync-lipsync-2",
++};
+ 
+ export class FalProvider implements Provider {
+   readonly name = "fal";
+-  private i2v: string;
+-  private t2v: string;
+-  /** providerJobId → { statusUrl, responseUrl } */
+-  private jobs = new Map<string, { statusUrl: string; responseUrl: string }>();
++  /** providerJobId → { statusUrl, responseUrl, kind } */
++  private jobs = new Map<string, { statusUrl: string; responseUrl: string; kind: string }>();
+ 
+   constructor(private cfg: FalConfig) {
+     if (!cfg.apiKey) throw new ProviderError(this.name, "FAL_KEY ausente");
+-    this.i2v = cfg.i2vEndpoint ?? "kling/v4/image-to-video";
+-    this.t2v = cfg.t2vEndpoint ?? "kling/v4/text-to-video";
+   }
+ 
+-  supports(kind: "image" | "video" | "audio") {
+-    return kind === "video";
++  supports(kind: GenerationRequest["kind"]) {
++    return kind !== "audio" && kind !== "sfx";
++  }
++
++  private modelFor(req: GenerationRequest): CatalogModel {
++    const id = (req as { model?: string }).model;
++    const m = findModel(id) ?? CATALOG.find((c) => c.id === DEFAULTS[req.kind]);
++    if (!m || m.provider !== "fal" || !m.fal) throw new ProviderError(this.name, `modelo ${id ?? req.kind} não é da fal`);
++    return m;
+   }
+ 
+   estimateCost(req: GenerationRequest): number {
+-    if (req.kind !== "video") return 0;
+-    const res = req.resolution === "480p" ? "720p" : (req.resolution ?? "1080p");
+-    return +(((req.durationSec ?? 5) * (PRICE_PER_SEC[res] ?? 0.235))).toFixed(4);
++    const m = this.modelFor(req);
++    switch (req.kind) {
++      case "video": {
++        const res = req.resolution === "480p" ? "720p" : (req.resolution ?? "1080p");
++        let perSec = m.price.perSec?.[res] ?? m.price.perSec?.["1080p"] ?? 0.1;
++        if (m.nativeAudio && req.audio && m.id !== "kling-4.0") perSec *= m.id === "kling-3.0" ? 1.5 : 2; // áudio nativo custa mais no 2.6/3.0
++        return +((req.durationSec ?? 5) * perSec).toFixed(4);
++      }
++      case "image":
++        return m.price.perImage ?? 0.15;
++      case "upscale": {
++        const f = req.factor ?? 2;
++        const outMp = (req.inputMp ?? 3.7) * f * f;
++        return +(outMp * (m.price.perMp ?? 0.03)).toFixed(4);
++      }
++      case "avatar":
++        return +((req.audioSec ?? 15) * (m.price.perSec?.["1080p"] ?? 0.16)).toFixed(4);
++      case "lipsync":
++        return +(((req.videoSec ?? 10) / 60) * (m.price.perMin ?? 3) * (req.pro ? 1.67 : 1)).toFixed(4);
++      default:
++        return 0;
++    }
+   }
+ 
+   private async http<T>(url: string, init: RequestInit = {}): Promise<T> {
+@@ -63,25 +86,96 @@ export class FalProvider implements Provider {
+     return body as T;
+   }
+ 
+-  async submit(req: GenerationRequest): Promise<SubmitResult> {
+-    if (req.kind !== "video") throw new ProviderError(this.name, "só gera vídeo");
+-    const r = req as VideoRequest;
+-    // Kling 4.0 na fal: 720p ou 1080p (480p vira 720p), 3–30 s
+-    const resolution = r.resolution === "480p" ? "720p" : (r.resolution ?? "1080p");
+-    const duration = Math.min(30, Math.max(3, r.durationSec ?? 5));
+-
+-    const endpoint = r.firstFrame ? this.i2v : this.t2v;
+-    const input: Record<string, unknown> = { prompt: r.prompt, duration, resolution };
+-    if (r.firstFrame) input.start_image_url = r.firstFrame;
+-    if (r.lastFrame) input.end_image_url = r.lastFrame;
+-    if (!r.firstFrame && r.ratio) input.aspect_ratio = r.ratio;
++  /** monta endpoint + input por família de modelo */
++  private build(req: GenerationRequest, m: CatalogModel): { endpoint: string; input: Record<string, unknown> } {
++    const f = m.fal!;
++    switch (req.kind) {
++      case "video": {
++        const duration = Math.min(Math.max(...(m.durations ?? [10])), Math.max(Math.min(...(m.durations ?? [3])), req.durationSec ?? 5));
++        if (f.family === "kling4") {
++          const resolution = req.resolution === "480p" ? "720p" : (req.resolution ?? "1080p");
++          const endpoint = req.firstFrame ? f.i2v! : f.t2v!;
++          const input: Record<string, unknown> = { prompt: req.prompt, duration, resolution };
++          if (req.firstFrame) input.start_image_url = req.firstFrame;
++          if (req.lastFrame) input.end_image_url = req.lastFrame;
++          if (!req.firstFrame && req.ratio) input.aspect_ratio = req.ratio;
++          return { endpoint, input };
++        }
++        if (f.family === "grok") {
++          if (!req.firstFrame) throw new ProviderError(this.name, `${m.name} só gera a partir de uma imagem`);
++          return { endpoint: f.i2v!, input: { image_url: req.firstFrame, prompt: req.prompt, duration, resolution: req.resolution ?? "720p" } };
++        }
++        // Kling 2.5 / 2.6 / 3.0 / 3.0 turbo
++        if (!req.firstFrame && !f.t2v) throw new ProviderError(this.name, `${m.name} só gera a partir de uma imagem (primeiro frame)`);
++        const endpoint = req.firstFrame ? f.i2v! : f.t2v!;
++        const input: Record<string, unknown> = { prompt: req.prompt, duration: String(duration) };
++        if (req.firstFrame) {
++          // v3 pro usa start_image_url; v2.5/v2.6/v3 turbo usam image_url
++          if (endpoint.includes("/v3/pro/")) input.start_image_url = req.firstFrame;
++          else input.image_url = req.firstFrame;
++          if (req.lastFrame && endpoint.includes("/v3/pro/")) input.end_image_url = req.lastFrame;
++          else if (req.lastFrame) input.tail_image_url = req.lastFrame;
++        } else if (req.ratio) input.aspect_ratio = req.ratio;
++        if (m.nativeAudio) input.generate_audio = !!req.audio;
++        input.negative_prompt = "blur, distort, low quality, text, watermark";
++        return { endpoint, input };
++      }
++      case "image": {
++        const ref = req.referenceImages?.[0];
++        const [w, h] = (req.size ?? "1440x2560").split("x").map(Number);
++        const endpoint = ref ? f.i2v! : f.endpoint!;
++        if (f.family === "nano") {
++          const ar = w > h ? "16:9" : w < h ? "9:16" : "1:1";
++          const input: Record<string, unknown> = { prompt: req.prompt, aspect_ratio: ar, resolution: "2K", num_images: 1, output_format: "png" };
++          if (ref) input.image_urls = req.referenceImages;
++          return { endpoint, input };
++        }
++        if (m.id === "gpt-image-1.5") {
++          const size = w > h ? "1536x1024" : w < h ? "1024x1536" : "1024x1024";
++          const input: Record<string, unknown> = { prompt: req.prompt, image_size: size, quality: "high", num_images: 1 };
++          if (ref) input.image_urls = req.referenceImages;
++          return { endpoint, input };
++        }
++        // GPT Image 2.5 / 2.6 (Flare / Sunburst): tamanho explícito, múltiplo de 16
++        const r16 = (n: number) => Math.max(1024, Math.round(n / 16) * 16);
++        const scale = Math.min(1, 2048 / Math.max(w, h));
++        const input: Record<string, unknown> = { prompt: req.prompt, image_size: { width: r16(w * scale), height: r16(h * scale) }, quality: "high", reasoning_effort: "low", num_images: 1 };
++        if (ref) input.image_urls = req.referenceImages;
++        return { endpoint, input };
++      }
++      case "upscale":
++        return {
++          endpoint: f.endpoint!,
++          input: {
++            image_url: req.imageUrl,
++            upscale_factor: req.factor ?? 2,
++            creativity: req.creativity ?? 0.35,
++            resemblance: req.resemblance ?? 0.6,
++            prompt: req.prompt ?? "masterpiece, best quality, highres, detailed skin and fabric texture",
++          },
++        };
++      case "lipsync":
++        return { endpoint: f.endpoint!, input: { video_url: req.videoUrl, audio_url: req.audioUrl, model: req.pro ? "lipsync-2-pro" : "lipsync-2", sync_mode: "cut_off" } };
++      case "avatar": {
++        if (f.family === "omnihuman") {
++          return { endpoint: f.endpoint!, input: { image_url: req.imageUrl, audio_url: req.audioUrl, prompt: req.prompt ?? "", resolution: req.resolution ?? "1080p" } };
++        }
++        return { endpoint: f.endpoint!, input: { image_url: req.imageUrl, audio_url: req.audioUrl, prompt: req.prompt ?? "." } };
++      }
++      default:
++        throw new ProviderError(this.name, `tipo ${(req as any).kind} não suportado`);
++    }
++  }
+ 
++  async submit(req: GenerationRequest): Promise<SubmitResult> {
++    const m = this.modelFor(req);
++    const { endpoint, input } = this.build(req, m);
+     const out = await this.http<{ request_id: string; status_url: string; response_url: string }>(`https://queue.fal.run/${endpoint}`, {
+       method: "POST",
+       body: JSON.stringify(input),
+     });
+     const id = `fal:${out.request_id}`;
+-    this.jobs.set(id, { statusUrl: out.status_url, responseUrl: out.response_url });
++    this.jobs.set(id, { statusUrl: out.status_url, responseUrl: out.response_url, kind: req.kind });
+     return { providerJobId: id, estimatedCostUsd: this.estimateCost(req) };
+   }
+ 
+@@ -91,10 +185,15 @@ export class FalProvider implements Provider {
+     const st = await this.http<FalStatus>(`${j.statusUrl}?logs=0`);
+     if (st.status === "IN_QUEUE") return { status: "queued" };
+     if (st.status === "IN_PROGRESS") return { status: "running" };
+-    const res = await this.http<{ video?: { url: string } ; detail?: unknown }>(j.responseUrl);
+-    if (!res.video?.url) return { status: "failed", error: `sem vídeo na resposta: ${JSON.stringify(res).slice(0, 300)}` };
++    const res = await this.http<{ video?: { url: string }; image?: { url: string; content_type?: string }; images?: { url: string; content_type?: string }[]; duration?: number }>(j.responseUrl);
+     this.jobs.delete(providerJobId);
+-    return { status: "succeeded", outputUrl: res.video.url, contentType: "video/mp4" };
++    if (j.kind === "video" || j.kind === "avatar" || j.kind === "lipsync") {
++      if (!res.video?.url) return { status: "failed", error: `sem vídeo na resposta: ${JSON.stringify(res).slice(0, 300)}` };
++      return { status: "succeeded", outputUrl: res.video.url, contentType: "video/mp4", usage: res.duration ? { seconds: res.duration } : undefined };
++    }
++    const img = res.image ?? res.images?.[0];
++    if (!img?.url) return { status: "failed", error: `sem imagem na resposta: ${JSON.stringify(res).slice(0, 300)}` };
++    return { status: "succeeded", outputUrl: img.url, contentType: img.content_type ?? "image/png" };
+   }
+ 
+   async download(url: string) {
+diff --git a/packages/providers/src/index.ts b/packages/providers/src/index.ts
+index 08bccc3..1a689dd 100644
+--- a/packages/providers/src/index.ts
++++ b/packages/providers/src/index.ts
+@@ -1,11 +1,14 @@
+ export * from "./types.js";
++export * from "./catalog.js";
+ export { BytePlusProvider, RESERVE_FUND_MODELS, type BytePlusConfig } from "./byteplus/index.js";
+ export { FalProvider, type FalConfig } from "./fal/index.js";
+ export { SeedAudioProvider, type SeedAudioConfig } from "./seedaudio/index.js";
++export { ElevenLabsProvider, type ElevenLabsConfig } from "./elevenlabs/index.js";
+ 
+ import { BytePlusProvider } from "./byteplus/index.js";
+ import { FalProvider } from "./fal/index.js";
+ import { SeedAudioProvider } from "./seedaudio/index.js";
++import { ElevenLabsProvider } from "./elevenlabs/index.js";
+ import type { Provider } from "./types.js";
+ 
+ /**
+@@ -27,5 +30,6 @@ export function providersFromEnv(env: NodeJS.ProcessEnv = process.env): Record<s
+   const speechKey = env.SEED_SPEECH_API_KEY || env.ARK_API_KEY;
+   if (speechKey) out.seedaudio = new SeedAudioProvider({ apiKey: speechKey, baseUrl: env.SEED_SPEECH_BASE_URL });
+   if (env.FAL_KEY) out.fal = new FalProvider({ apiKey: env.FAL_KEY });
++  if (env.ELEVENLABS_API_KEY) out.elevenlabs = new ElevenLabsProvider({ apiKey: env.ELEVENLABS_API_KEY, model: env.ELEVENLABS_MODEL, defaultVoiceId: env.ELEVENLABS_VOICE_ID });
+   return out;
+ }
+diff --git a/packages/providers/src/seedaudio/index.ts b/packages/providers/src/seedaudio/index.ts
+index 7e45f08..08bad48 100644
+--- a/packages/providers/src/seedaudio/index.ts
++++ b/packages/providers/src/seedaudio/index.ts
+@@ -1,4 +1,4 @@
+-import { type AudioRequest, type GenerationRequest, type PollResult, type Provider, type SubmitResult, ProviderError } from "../types.js";
++import { type AudioRequest, type GenerationRequest, type MediaKind, type PollResult, type Provider, type SubmitResult, ProviderError } from "../types.js";
+ 
+ /**
+  * BytePlus Seed Speech — Seed Audio 1.0 (o motor de voz que o Higgsfield usa).
+@@ -43,7 +43,7 @@ export class SeedAudioProvider implements Provider {
+     this.pricePerMinute = cfg.pricePerMinuteUsd ?? 0.03;
+   }
+ 
+-  supports(kind: "image" | "video" | "audio") {
++  supports(kind: MediaKind) {
+     return kind === "audio";
+   }
+ 
+@@ -77,8 +77,10 @@ export class SeedAudioProvider implements Provider {
+       text_prompt: prompt,
+       ...(references.length ? { references } : {}),
+       audio_config: {
+-        format: req.format ?? "mp3",
+-        sample_rate: req.format === "wav" ? 24000 : 44100,
++        // sempre WAV: o mp3 do Seed Audio sai quase mudo no ffmpeg-static (build do macOS);
++        // o wav é maior, mas decodifica certo em qualquer ffmpeg
++        format: "wav",
++        sample_rate: 24000,
+         speech_rate: req.speechRate ?? 0,
+         pitch_rate: req.pitch ?? 0,
+         loudness_rate: 0,
+@@ -109,7 +111,7 @@ export class SeedAudioProvider implements Provider {
+         status: "succeeded",
+         outputBytes: new Uint8Array(Buffer.from(out.audio, "base64")),
+         outputUrl: out.url,
+-        contentType: (req.format ?? "mp3") === "wav" ? "audio/wav" : "audio/mpeg",
++        contentType: "audio/wav",
+         usage: { seconds: out.original_duration ?? out.duration ?? 0 },
+         meta: { durationSec: out.duration ?? out.original_duration, subtitle: out.subtitle ?? null },
+       });
+diff --git a/packages/providers/src/types.ts b/packages/providers/src/types.ts
+index b32ec93..a574698 100644
+--- a/packages/providers/src/types.ts
++++ b/packages/providers/src/types.ts
+@@ -3,7 +3,7 @@
+  * O app nunca fala com um provedor direto — só com esta interface.
+  */
+ 
+-export type MediaKind = "image" | "video" | "audio";
++export type MediaKind = "image" | "video" | "audio" | "avatar" | "upscale" | "lipsync" | "sfx";
+ 
+ export interface ImageRequest {
+   kind: "image";
+@@ -31,6 +31,10 @@ export interface VideoRequest {
+   durationSec?: number;
+   /** gerar áudio junto (modelos que suportam) */
+   audio?: boolean;
++  /** áudio de referência (narração pronta) — Seedance 2.5 anima a fala pela voz real */
++  audioRef?: string;
++  /** imagens extras de referência (personagem, cenário) — Seedance 2.x omni */
++  referenceImages?: string[];
+   seed?: number;
+ }
+ 
+@@ -50,7 +54,51 @@ export interface AudioRequest {
+   language?: string;
+ }
+ 
+-export type GenerationRequest = ImageRequest | VideoRequest | AudioRequest;
++/** clone de pessoa: foto + áudio (voz clonada) → vídeo da pessoa falando */
++export interface AvatarRequest {
++  kind: "avatar";
++  model?: string;
++  imageUrl: string;
++  audioUrl: string;
++  prompt?: string;
++  resolution?: "720p" | "1080p";
++  /** duração do áudio em segundos (pra estimar custo antes de gerar) */
++  audioSec?: number;
++}
++
++/** upscale criativo (estilo Magnific) */
++export interface UpscaleRequest {
++  kind: "upscale";
++  model?: string;
++  imageUrl: string;
++  factor?: number; // 1–4
++  creativity?: number; // 0–1
++  resemblance?: number; // 0–1
++  prompt?: string;
++  /** megapixels da imagem de entrada (pra estimar custo) */
++  inputMp?: number;
++}
++
++/** lip-sync num vídeo pronto (plano B da boca) */
++export interface LipsyncRequest {
++  kind: "lipsync";
++  model?: string;
++  videoUrl: string;
++  audioUrl: string;
++  pro?: boolean;
++  /** duração do vídeo em segundos (estimativa) */
++  videoSec?: number;
++}
++
++/** efeito sonoro de uma ação (foley) */
++export interface SfxRequest {
++  kind: "sfx";
++  model?: string;
++  prompt: string;
++  durationSec?: number; // 0.5–22
++}
++
++export type GenerationRequest = ImageRequest | VideoRequest | AudioRequest | AvatarRequest | UpscaleRequest | LipsyncRequest | SfxRequest;
+ 
+ export interface SubmitResult {
+   /** id do job no provedor */
+-- 
+2.43.0
+

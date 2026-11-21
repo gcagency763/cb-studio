@@ -1,0 +1,126 @@
+From 1be8c1adf2c28690123a74d28750a047e02b9071 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 16:09:26 -0300
+Subject: [PATCH] =?UTF-8?q?render:=20layout=20dos=20cards=20sem=20sobrepos?=
+ =?UTF-8?q?i=C3=A7=C3=A3o;=20guarda=20de=20minutos=20de=20voz=20(VOICE=5FF?=
+ =?UTF-8?q?REE=5FMINUTES)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01RuN42np61xqAB6grnhnWqy
+---
+ .env.example                    |  2 ++
+ apps/api/src/lib/db.ts          |  8 ++++++++
+ apps/api/src/lib/env.ts         |  2 ++
+ apps/api/src/lib/render.ts      | 23 ++++++++++++++++++-----
+ apps/api/src/routes/generate.ts | 13 +++++++++++++
+ 5 files changed, 43 insertions(+), 5 deletions(-)
+
+diff --git a/.env.example b/.env.example
+index 00be9aa..3ebb105 100644
+--- a/.env.example
++++ b/.env.example
+@@ -39,3 +39,5 @@ S3_PUBLIC_BASE_URL=
+ 
+ # Guarda de custo: a API recusa jobs acima disso (USD) sem flag allowPaid
+ MAX_JOB_COST_USD=0.50
++# trava de narração: não gera voz além disso (Seed Speech dá 60 min grátis, depois US$ 0,15/min)
++VOICE_FREE_MINUTES=55
+diff --git a/apps/api/src/lib/db.ts b/apps/api/src/lib/db.ts
+index fb766cf..2fc71e3 100644
+--- a/apps/api/src/lib/db.ts
++++ b/apps/api/src/lib/db.ts
+@@ -226,3 +226,11 @@ export async function listAssets(kind?: string, limit = 200) {
+     ? sql<JobRow[]>`select * from jobs where status = 'succeeded' and output_url is not null and kind = ${kind} order by created_at desc limit ${limit}`
+     : sql<JobRow[]>`select * from jobs where status = 'succeeded' and output_url is not null order by created_at desc limit ${limit}`;
+ }
++
++/** minutos de áudio já gerados pelo Seed Speech (sucesso) — pra guarda da cota grátis */
++export async function voiceMinutesUsed(): Promise<number> {
++  const [row] = await sql<{ secs: string | null }[]>`
++    select coalesce(sum((usage->>'seconds')::numeric), 0) as secs
++    from jobs where kind = 'audio' and status = 'succeeded'`;
++  return Number(row?.secs ?? 0) / 60;
++}
+diff --git a/apps/api/src/lib/env.ts b/apps/api/src/lib/env.ts
+index b675dd0..cd5285d 100644
+--- a/apps/api/src/lib/env.ts
++++ b/apps/api/src/lib/env.ts
+@@ -18,6 +18,8 @@ const schema = z.object({
+   DATABASE_URL: z.string().default("postgres://g2:g2@localhost:5433/g2studio"),
+   REDIS_URL: z.string().default("redis://localhost:6380"),
+   MAX_JOB_COST_USD: z.coerce.number().default(0.5),
++  /** trava de minutos de narração (Seed Speech: 60 min grátis, depois US$ 0,15/min) */
++  VOICE_FREE_MINUTES: z.coerce.number().default(55),
+   // pasta absoluta na raiz do monorepo — API e worker precisam ver o mesmo lugar
+   STORAGE_DIR: z.string().default(resolve(here, "../../../../storage")),
+   S3_ENDPOINT: z.string().optional(),
+diff --git a/apps/api/src/lib/render.ts b/apps/api/src/lib/render.ts
+index 133f9ca..3fe48af 100644
+--- a/apps/api/src/lib/render.ts
++++ b/apps/api/src/lib/render.ts
+@@ -237,11 +237,24 @@ Style: Btn,${o.fontName},${btn},&H00141414,&H00FFFFFF,${gold},${gold},-1,0,0,0,1
+ `;
+   const lines: string[] = [];
+   const fade = "{\\fad(250,250)}";
+-  // título com leve "pop"
+-  const titleY = card.subtext || card.button ? Math.round(o.height * 0.44) : Math.round(o.height * 0.5);
+-  lines.push(`Dialogue: 0,${assTime(0)},${assTime(dur)},Title,,0,0,0,,${fade}{\\pos(${o.width / 2},${titleY})\\fscx96\\fscy96\\t(0,300,\\fscx100\\fscy100)}${escapeAss(wrap(card.text, 14))}`);
+-  if (card.subtext) lines.push(`Dialogue: 0,${assTime(0.15)},${assTime(dur)},Sub,,0,0,0,,${fade}{\\pos(${o.width / 2},${Math.round(o.height * 0.56)})}${escapeAss(wrap(card.subtext, 30))}`);
+-  if (card.button) lines.push(`Dialogue: 0,${assTime(0.3)},${assTime(dur)},Btn,,0,0,0,,${fade}{\\pos(${o.width / 2},${Math.round(o.height * 0.7)})}  ${escapeAss(card.button.toUpperCase())}  `);
++  // layout vertical: mede os blocos (título pode ter 1–3 linhas) e empilha centrado,
++  // pra título longo nunca invadir o subtítulo/botão
++  const titleTxt = wrap(card.text, 14);
++  const subTxt = card.subtext ? wrap(card.subtext, 30) : "";
++  const titleH = titleTxt.split("\n").length * big * 1.15;
++  const subH = subTxt ? subTxt.split("\n").length * sub * 1.3 : 0;
++  const btnH = card.button ? btn * 1.9 : 0;
++  const gap = Math.round(o.fontSize * 0.9);
++  const totalH = titleH + (subH ? gap + subH : 0) + (btnH ? gap * 1.6 + btnH : 0);
++  let y = o.height * 0.5 - totalH / 2;
++  const titleY = Math.round(y + titleH / 2);
++  y += titleH + gap;
++  lines.push(`Dialogue: 0,${assTime(0)},${assTime(dur)},Title,,0,0,0,,${fade}{\\pos(${o.width / 2},${titleY})\\fscx96\\fscy96\\t(0,300,\\fscx100\\fscy100)}${escapeAss(titleTxt)}`);
++  if (subTxt) {
++    lines.push(`Dialogue: 0,${assTime(0.15)},${assTime(dur)},Sub,,0,0,0,,${fade}{\\pos(${o.width / 2},${Math.round(y + subH / 2)})}${escapeAss(subTxt)}`);
++    y += subH;
++  }
++  if (card.button) lines.push(`Dialogue: 0,${assTime(0.3)},${assTime(dur)},Btn,,0,0,0,,${fade}{\\pos(${o.width / 2},${Math.round(y + gap * 1.6 + btnH / 2)})}  ${escapeAss(card.button.toUpperCase())}  `);
+   return assHeader(o, styles) + lines.join("\n") + "\n";
+ }
+ 
+diff --git a/apps/api/src/routes/generate.ts b/apps/api/src/routes/generate.ts
+index 647fef4..a0f7148 100644
+--- a/apps/api/src/routes/generate.ts
++++ b/apps/api/src/routes/generate.ts
+@@ -1,5 +1,6 @@
+ import type { FastifyInstance } from "fastify";
+ import { z } from "zod";
++import { voiceMinutesUsed } from "../lib/db.js";
+ import { providersFromEnv } from "@g2/providers";
+ import { createJob, getJob } from "../lib/db.js";
+ import { env } from "../lib/env.js";
+@@ -86,6 +87,18 @@ export async function generateRoutes(app: FastifyInstance) {
+     if (!p.supports(body.request.kind)) return reply.code(400).send({ error: `${p.name} não gera ${body.request.kind}` });
+ 
+     const cost = p.estimateCost(body.request);
++    // ── GUARDA DE MINUTOS DE VOZ (Seed Speech cobra US$ 0,15/min depois da cota grátis) ──
++    if (body.request.kind === "audio") {
++      const used = await voiceMinutesUsed();
++      const extra = Math.max(2, body.request.text.length / 15) / 60;
++      if (used + extra > env.VOICE_FREE_MINUTES) {
++        return reply.code(402).send({
++          error: `limite de voz grátis: ${used.toFixed(1)} de ${env.VOICE_FREE_MINUTES} min usados — suba VOICE_FREE_MINUTES no .env pra liberar (cobra US$ 0,15/min)`,
++          voiceMinutesUsed: used,
++          voiceFreeMinutes: env.VOICE_FREE_MINUTES,
++        });
++      }
++    }
+     // ── GUARDA DE CUSTO ──────────────────────────────────────────────
+     if (cost > env.MAX_JOB_COST_USD && !body.allowPaid) {
+       return reply.code(402).send({
+-- 
+2.43.0
+
