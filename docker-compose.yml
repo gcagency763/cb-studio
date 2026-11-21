@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: g2
+      POSTGRES_PASSWORD: g2
+      POSTGRES_DB: g2studio
+    ports: ["5433:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6380:6379"]
+
+  # transcrição local (Cortes / legenda automática): Whisper em CPU, grátis.
+  # WHISPER_MODEL: small (rápido, padrão) · medium · large-v3-turbo (melhor PT, 3x mais lento)
+  whisper:
+    image: onerahmet/openai-whisper-asr-webservice:latest
+    environment:
+      ASR_ENGINE: faster_whisper
+      ASR_MODEL: ${WHISPER_MODEL:-small}
+      ASR_DEVICE: cpu
+      MODEL_IDLE_TIMEOUT: "900"
+    ports: ["9000:9000"]
+    volumes: [whisper-cache:/root/.cache]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  whisper-cache:
