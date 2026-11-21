@@ -1,0 +1,13 @@
+**/node_modules
+**/.next
+**/dist
+storage
+.env
+.env.*
+!.env.example
+.git
+.patches
+infra/gpu/.venv
+**/__pycache__
+*.log
+.DS_Store

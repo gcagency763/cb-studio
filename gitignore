@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.next/
+.env
+.env.*
+!.env.example
+storage/
+*.log
+.DS_Store
+.turbo/
+apps/web/tsconfig.tsbuildinfo
+*.tsbuildinfo
+apps/web/next-env.d.ts
+infra/gpu/.venv/
+__pycache__/
