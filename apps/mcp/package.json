@@ -1,0 +1,24 @@
+{
+  "name": "@g2/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP do CB Studio — controla o estúdio (imagem, vídeo, voz, clone, quadrinhos, render, gastos) pelo Claude",
+  "bin": { "cb-studio-mcp": "dist/server.js" },
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "start": "tsx src/server.ts",
+    "http": "tsx src/server.ts --http 4100",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
